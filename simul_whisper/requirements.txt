@@ -1,0 +1,10 @@
+numba
+numpy
+torch
+torchaudio
+tqdm
+jsonlines
+soundfile
+more-itertools
+tiktoken
+triton>=2.0.0,<3
