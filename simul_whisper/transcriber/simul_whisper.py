@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 
 from ..whisper import load_model, DecodingOptions, tokenizer
-from .config import AlignAttConfig, SimulWhisperConfig
+from .config import AlignAttConfig
 from ..whisper.audio import log_mel_spectrogram, TOKENS_PER_SECOND, pad_or_trim, N_SAMPLES, N_FRAMES
 from ..whisper.timing import median_filter
 from ..whisper.decoding import SuppressBlank, GreedyDecoder, BeamSearchDecoder, SuppressTokens, PyTorchInference
@@ -23,142 +23,7 @@ def dprint(a):
     print("simul_whisper DEBUG",a,file=sys.stderr)
 logger.debug = dprint
 
-
-class HIDEForceDecodeWhisper:
-
-    def to_torch(self, x):
-        return torch.tensor(x, dtype=torch.long, device=self.model.device).unsqueeze(0)
-
-    def __init__(self, cfg: SimulWhisperConfig) -> None:
-        model_name = os.path.basename(cfg.model_path).replace(".pt", "")
-        model_path = os.path.dirname(cfg.model_path)
-        self.model = load_model(name=model_name, download_root=model_path)
-
-        decode_options = DecodingOptions(
-            language = cfg.language, 
-            without_timestamps = True,
-            task="transcribe"
-        )
-        self.tokenizer = tokenizer.get_tokenizer(
-            multilingual=True, 
-            language=cfg.language, 
-            num_languages=self.model.num_languages,
-            task=decode_options.task
-        )
-        self.max_text_len = self.model.dims.n_text_ctx
-        self.cfg = cfg
-
-        self.initial_tokens = self.to_torch(self.tokenizer.sot_sequence) 
-        self.initial_token_length = self.initial_tokens.shape[1]
-        self.sot_index = self.tokenizer.sot_sequence.index(self.tokenizer.sot)
-
-        suppress_tokens = [
-                self.tokenizer.transcribe,
-                self.tokenizer.translate,
-                self.tokenizer.sot,
-                self.tokenizer.sot_prev,
-                self.tokenizer.sot_lm,
-                # self.tokenizer.eot 
-            ]
-        if self.tokenizer.no_speech is not None:
-            suppress_tokens.append(self.tokenizer.no_speech)
-        suppress_tokens =  tuple(sorted(set(suppress_tokens)))
-
-        self.logit_filters = [
-            SuppressBlank(self.tokenizer, self.initial_token_length),
-            SuppressTokens(suppress_tokens)
-            ]
-        self.token_decoder = GreedyDecoder(0.0, self.tokenizer.eot)
-
-        # init state
-        self.segments = []
-        self.tokens = [self.initial_tokens]
-        self.last_attend_frame = -self.cfg.rewind_threshold
-        self.context = []
-
-    def refresh_segment(self, complete=False):
-        self.tokens = [self.initial_tokens] 
-        self.context = []
-        if not complete and len(self.segments) > 2:
-            self.segments = self.segments[-2:]
-        else:
-            self.segments = []
-
-    def logits(self, tokens: torch.Tensor, audio_features: torch.Tensor) -> torch.Tensor:
-        logit = self.model.decoder(tokens, audio_features)
-        return logit
- 
-    
-    @torch.no_grad()
-    def infer(self, audio, init_prompt, force_decode="", is_last=False):
-        new_segment = True
-
-        # wait for long enough audio to start
-        if len(audio) < self.cfg.min_seg_len: 
-            logger.debug("audio too short yet")
-            return self.initial_tokens.new_tensor([])
-
-        toks = self.tokenizer.encode(init_prompt + force_decode)
-        toks = self.to_torch(toks)
-        current_tokens = torch.cat((self.initial_tokens, toks),dim=1)
-        beg_len = current_tokens.shape[1]
-
-        print(audio,file=sys.stderr)
-        
-        # mel + padding to 30s
-        mel_padded = log_mel_spectrogram(audio, n_mels=self.model.dims.n_mels, padding=N_SAMPLES, 
-                                            device=self.model.device).unsqueeze(0)
-        logger.debug(f"after padding: {mel_padded.shape}")
-
-        # trim to 3000
-        mel = pad_or_trim(mel_padded, N_FRAMES)
-        logger.debug(f"after trim {mel.shape}")
-
-        encoder_feature = self.model.encoder(mel)
-
-        sum_logprobs = torch.zeros(1, device=mel.device)
-        completed = False
-        while not completed and current_tokens.shape[1] < self.max_text_len: # bos is 3 tokens
-
-            if not new_segment:
-                # only need to use the last token except in the first forward pass
-                tokens = current_tokens[:,-1:]
-            else:
-                tokens = current_tokens
-
-            logits = self.logits(tokens, encoder_feature) # B, len(tokens), token dict size
-
-            # if no speech, break
-            if new_segment and self.tokenizer.no_speech is not None:
-                probs_at_sot = logits[:, self.sot_index, :].float().softmax(dim=-1)
-                no_speech_probs = probs_at_sot[:, self.tokenizer.no_speech].tolist()
-                if no_speech_probs[0] > self.cfg.nonspeech_prob:
-                    break
-
-            new_segment = False
-            logits = logits[:, -1, :] # logits for the last token
-            for logits_filter in self.logit_filters:
-                logits_filter.apply(logits, current_tokens)
-            current_tokens, completed = self.token_decoder.update(current_tokens, logits, sum_logprobs)
-
-            if completed:
-                logger.debug("decode stopped")
-                current_tokens = current_tokens[:, :-1]
-                break
-            
-
-        #print(current_tokens)
-        new_tokens = current_tokens.new_tensor([]).unsqueeze(0)
-        print(new_tokens, file=sys.stderr)
-        new_tokens = new_tokens[:, beg_len:]
-        print(new_tokens, file=sys.stderr)
-        new_tokens = new_tokens[new_tokens < DEC_PAD]
-        print(new_tokens, file=sys.stderr)
-        t = self.tokenizer.decode(new_tokens.squeeze(0).tolist())
-        print("decoded new tokens:",t,file=sys.stderr)
-        return t
-
-class PaddedAlignAttWhisper():
+class PaddedAlignAttWhisper:
     def __init__(self, cfg: AlignAttConfig) -> None:
         self.debug_iterations = 0
         model_name = os.path.basename(cfg.model_path).replace(".pt", "")
