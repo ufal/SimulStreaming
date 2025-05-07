@@ -66,7 +66,7 @@ def asr_factory(args, factory=None, logfile=sys.stderr):
 
     # Create the OnlineASRProcessor
     if args.vac:
-        from vac_online_processor import VACOnlineASRProcessor
+        from whisper_streaming.vac_online_processor import VACOnlineASRProcessor
         online = VACOnlineASRProcessor(args.min_chunk_size, online)
 
     if args.task == "translate":

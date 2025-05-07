@@ -1,5 +1,6 @@
 from whisper_streaming.base import OnlineProcessorInterface
 from whisper_streaming.silero_vad_iterator import FixedVADIterator
+import numpy as np
 
 class VACOnlineASRProcessor(OnlineProcessorInterface):
     '''Wraps OnlineASRProcessor with VAC (Voice Activity Controller). 
