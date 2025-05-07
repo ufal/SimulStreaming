@@ -1,0 +1,4 @@
+from whisper_streaming.whisper_online_main import main_simulation_from_file
+from simul_whisper_backend import simul_asr_factory, simulwhisper_args
+
+main_simulation_from_file(simul_asr_factory, add_args=simulwhisper_args)

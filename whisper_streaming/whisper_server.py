@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from whisper_online import *
+from whisper_streaming.whisper_online_main import *
 
 import sys
 import argparse
@@ -7,10 +7,7 @@ import os
 import logging
 import numpy as np
 
-if "simul" in sys.argv[0]:
-    entrypoint = "simulwhisper"
-else:
-    entrypoint = "localagreement"
+entrypoint = "simulwhisper"
 
 
 logger = logging.getLogger(__name__)
@@ -24,10 +21,9 @@ parser.add_argument("--warmup-file", type=str, dest="warmup_file",
         "https://github.com/ggerganov/whisper.cpp/raw/master/samples/jfk.wav .")
 
 # options from whisper_online
-common_args(parser)
+processor_args(parser)
 if entrypoint == "localagreement":
-    localagreement_args(parser)
-    backend = None
+    raise ValueError("localagreement is not supported in this entry point.")
 elif entrypoint == "simulwhisper":
     from simul_whisper_backend import simulwhisper_args
     simulwhisper_args(parser)
@@ -63,7 +59,7 @@ else:
 
 ######### Server objects
 
-import line_packet
+import whisper_streaming.line_packet as line_packet
 import socket
 
 class Connection:

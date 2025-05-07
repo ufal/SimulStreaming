@@ -1,30 +1,13 @@
-from online_processor_interface import OnlineProcessorInterface
-from asr_base import ASRBase
+from whisper_streaming.base import OnlineProcessorInterface, ASRBase
 import numpy as np
 import argparse
 
-import os
 import sys
 import torch
 
-#sys.path.append(os.path.dirname(__file__))
 from simul_whisper.transcriber.config import AlignAttConfig
-#from simul_whisper.transcriber.segment_loader import SegmentWrapper
-from simul_whisper.transcriber.simul_whisper import *
-
-
-#model_path = "./large-v2"
-#if_ckpt_path = "cif_models/large-v2.pt" # align with the whisper model. e.g., using small.pt for whisper small
-
-
-#segment_length = 0.1 # chunk length, in seconds
-#frame_threshold = 24 # threshold for the attention-guided decoding, in frames
-#buffer_len = 5 # the lengths for the context buffer, in seconds
-#min_seg_len = 3.0 # transcibe only when the context buffer is larger than this threshold. Useful when the segment_length is small
-#language = "cs"
-
-#audio_path = "en-demo-c1.16k.wav"
-#audio_path = "cs.wav"
+from simul_whisper.transcriber.simul_whisper import PaddedAlignAttWhisper, DEC_PAD
+from simul_whisper.whisper import tokenizer
 
 def simulwhisper_args(parser):
     parser.add_argument('--model_path', type=str, default='./large-v3.pt', 
@@ -45,7 +28,6 @@ def simulwhisper_args(parser):
     parser.add_argument("--init_prompt",type=str, default=None, help="Init prompt for the model. It should be in the target language.")
     parser.add_argument("--static_init_prompt",type=str, default=None, help="Do not scroll over this text. It can contain terminology that should be relevant over all document.")
     parser.add_argument("--max_context_tokens",type=int, default=None, help="Max context tokens for the model.")
-
 
 
 def simul_asr_factory(args, logfile=sys.stderr):
@@ -78,7 +60,6 @@ def simul_asr_factory(args, logfile=sys.stderr):
     asr = SimulWhisperASR(**a,logfile=logfile)
     return asr, SimulWhisperOnline(asr, logfile)
 
-from simul_whisper.whisper import tokenizer
 class SimulWhisperASR(ASRBase):
     
     sep = " "
@@ -103,7 +84,6 @@ class SimulWhisperASR(ASRBase):
             static_init_prompt=static_init_prompt,
         )
         print(language,file=sys.stderr)
-        #self.model = ForceDecodeWhisper(cfg)
         self.model = PaddedAlignAttWhisper(cfg)
 
     def transcribe(self, audio, init_prompt=""):
@@ -124,22 +104,6 @@ class SimulWhisperASR(ASRBase):
                                                              task="translate")
 
 
-class SimulForcedASR(SimulWhisperASR):
-    def __init__(self, *a, **kw):
-        super().__init__("cs",model_path="./large-v3", 
-            if_ckpt_path="cif_models/large-v2.pt", 
-            frame_threshold=24, 
-            buffer_len=3, 
-            min_seg_len=1, 
-            segment_length=1, logfile=sys.stderr)
-
-    def ts_words(self,r):
-        # return: transcribe result object to [(beg,end,"word1"), ...]
-        o = [(1.0, 2.0, r)]
-        return o
-
-    def segments_end_ts(self, res):
-        return [0.44 for r in res]
                 
 class SimulWhisperOnline(OnlineProcessorInterface):
     def __init__(self, asr, logfile=sys.stderr):
@@ -205,22 +169,20 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 
 
 if __name__ == "__main__":
+    # demo code, to check if it runs or crashes. It processes one second
     import argparse
-    from common_args import *
+    from whisper_streaming.whisper_online_main import processor_args, simulation_args, load_audio_chunk
     parser = argparse.ArgumentParser()
-    common_args(parser)
+    processor_args(parser)
+    simulation_args(parser)
     simulwhisper_args(parser)
     args = parser.parse_args()
     asr, online = simul_asr_factory(args)
 
-    #online = VACOnlineASRProcessor(args.min_chunk_size, online=online)
-
-    audio = load_audio_chunk("cs.wav",0,1)
+    audio = load_audio_chunk(args.audio_path ,0,1)
     online.insert_audio_chunk(audio)
     p = online.process_iter()
     print(p)
 
-
-    p = online.finish() #%insert_audio_chunk(np.array([]))
+    p = online.finish()
     print(p)
-#    print(online.process_iter

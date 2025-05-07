@@ -1,47 +1,5 @@
-import numpy as np
-import librosa
-from functools import lru_cache
-
-
-@lru_cache(10**6)
-def load_audio(fname):
-    a, _ = librosa.load(fname, sr=16000, dtype=np.float32)
-    return a
-
-def load_audio_chunk(fname, beg, end):
-    audio = load_audio(fname)
-    beg_s = int(beg*16000)
-    end_s = int(end*16000)
-    return audio[beg_s:end_s]
-
-def common_args(parser):
-    """shared args for simulation (this entry point) and server
-    parser: argparse.ArgumentParser object
-    """
-    parser.add_argument('--min-chunk-size', type=float, default=1.0, 
-                        help='Minimum audio chunk size in seconds. It waits up to this time to do processing. If the processing takes shorter '
-                        'time, it waits, otherwise it processes the whole segment that was received by this time.')
-
-
-    parser.add_argument('--lan', '--language', type=str, default='auto', 
-                        help="Source language code, e.g. en,de,cs, or 'auto' for language detection.")
-    parser.add_argument('--task', type=str, default='transcribe', 
-                        choices=["transcribe","translate"],
-                        help="Transcribe or translate.")
-
-    parser.add_argument('--vac', action="store_true", default=False, 
-                        help='Use VAC = voice activity controller. Recommended. Requires torch.')
-    parser.add_argument('--vac-chunk-size', type=float, default=0.04, 
-                        help='VAC sample size in seconds.')
-    parser.add_argument('--vad', action="store_true", default=False, 
-                        help='Use VAD = voice activity detection, with the default parameters.')
-
-    parser.add_argument("-l", "--log-level", dest="log_level", 
-                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], 
-                        help="Set the log level", default='DEBUG')
-
-
-from online_processor_interface import OnlineProcessorInterface
+from whisper_streaming.base import OnlineProcessorInterface
+from whisper_streaming.silero_vad_iterator import FixedVADIterator
 
 class VACOnlineASRProcessor(OnlineProcessorInterface):
     '''Wraps OnlineASRProcessor with VAC (Voice Activity Controller). 
@@ -62,7 +20,6 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
             repo_or_dir='snakers4/silero-vad',
             model='silero_vad'
         )
-        from silero_vad_iterator import FixedVADIterator
         self.vac = FixedVADIterator(model)  # we use the default options there: 500ms silence, 100ms padding, etc.  
 
         self.logfile = self.online.logfile
