@@ -6,9 +6,6 @@ from functools import lru_cache
 import time
 import logging
 
-import io
-import soundfile as sf
-import math
 
 logger = logging.getLogger(__name__)
 
@@ -23,269 +20,6 @@ def load_audio_chunk(fname, beg, end):
     end_s = int(end*16000)
     return audio[beg_s:end_s]
 
-
-# Whisper backend
-from asr_base import ASRBase
-
-
-class WhisperTimestampedASR(ASRBase):
-    """Uses whisper_timestamped library as the backend. Initially, we tested the code on this backend. It worked, but slower than faster-whisper.
-    On the other hand, the installation for GPU could be easier.
-    """
-
-    sep = " "
-
-    def load_model(self, modelsize=None, cache_dir=None, model_dir=None):
-        import whisper
-        import whisper_timestamped
-        from whisper_timestamped import transcribe_timestamped
-        self.transcribe_timestamped = transcribe_timestamped
-        if model_dir is not None:
-            logger.debug("ignoring model_dir, not implemented")
-        return whisper.load_model(modelsize, download_root=cache_dir)
-
-    def transcribe(self, audio, init_prompt=""):
-        result = self.transcribe_timestamped(self.model,
-                audio, language=self.original_language,
-                initial_prompt=init_prompt, verbose=None,
-                condition_on_previous_text=True, **self.transcribe_kargs)
-        return result
- 
-    def ts_words(self,r):
-        # return: transcribe result object to [(beg,end,"word1"), ...]
-        o = []
-        for s in r["segments"]:
-            for w in s["words"]:
-                t = (w["start"],w["end"],w["text"])
-                o.append(t)
-        return o
-
-    def segments_end_ts(self, res):
-        return [s["end"] for s in res["segments"]]
-
-    def use_vad(self):
-        self.transcribe_kargs["vad"] = True
-
-    def set_translate_task(self):
-        self.transcribe_kargs["task"] = "translate"
-
-
-
-
-class FasterWhisperASR(ASRBase):
-    """Uses faster-whisper library as the backend. Works much faster, appx 4-times (in offline mode). For GPU, it requires installation with a specific CUDNN version.
-    """
-
-    sep = ""
-
-    def load_model(self, modelsize=None, cache_dir=None, model_dir=None):
-        from faster_whisper import WhisperModel
-#        logging.getLogger("faster_whisper").setLevel(logger.level)
-        if model_dir is not None:
-            logger.debug(f"Loading whisper model from model_dir {model_dir}. modelsize and cache_dir parameters are not used.")
-            model_size_or_path = model_dir
-        elif modelsize is not None:
-            model_size_or_path = modelsize
-        else:
-            raise ValueError("modelsize or model_dir parameter must be set")
-
-
-        # this worked fast and reliably on NVIDIA L40
-        model = WhisperModel(model_size_or_path, device="cuda", compute_type="float16", download_root=cache_dir)
-
-        # or run on GPU with INT8
-        # tested: the transcripts were different, probably worse than with FP16, and it was slightly (appx 20%) slower
-        #model = WhisperModel(model_size, device="cuda", compute_type="int8_float16")
-
-        # or run on CPU with INT8
-        # tested: works, but slow, appx 10-times than cuda FP16
-#        model = WhisperModel(modelsize, device="cpu", compute_type="int8") #, download_root="faster-disk-cache-dir/")
-        return model
-
-    def transcribe(self, audio, init_prompt=""):
-
-        # tested: beam_size=5 is faster and better than 1 (on one 200 second document from En ESIC, min chunk 0.01)
-        segments, info = self.model.transcribe(audio, language=self.original_language, initial_prompt=init_prompt, beam_size=5, word_timestamps=True, condition_on_previous_text=True, **self.transcribe_kargs)
-        #print(info)  # info contains language detection result
-
-        return list(segments)
-
-    def ts_words(self, segments):
-        o = []
-        for segment in segments:
-            for word in segment.words:
-                if segment.no_speech_prob > 0.9:
-                    continue
-                # not stripping the spaces -- should not be merged with them!
-                w = word.word
-                t = (word.start, word.end, w)
-                o.append(t)
-        return o
-
-    def segments_end_ts(self, res):
-        return [s.end for s in res]
-
-    def use_vad(self):
-        self.transcribe_kargs["vad_filter"] = True
-
-    def set_translate_task(self):
-        self.transcribe_kargs["task"] = "translate"
-
-
-class OpenaiApiASR(ASRBase):
-    """Uses OpenAI's Whisper API for audio transcription."""
-
-    def __init__(self, lan=None, temperature=0, logfile=sys.stderr):
-        self.logfile = logfile
-
-        self.modelname = "whisper-1"  
-        self.original_language = None if lan == "auto" else lan # ISO-639-1 language code
-        self.response_format = "verbose_json" 
-        self.temperature = temperature
-
-        self.load_model()
-
-        self.use_vad_opt = False
-
-        # reset the task in set_translate_task
-        self.task = "transcribe"
-
-    def load_model(self, *args, **kwargs):
-        from openai import OpenAI
-        self.client = OpenAI()
-
-        self.transcribed_seconds = 0  # for logging how many seconds were processed by API, to know the cost
-        
-
-    def ts_words(self, segments):
-        no_speech_segments = []
-        if self.use_vad_opt:
-            for segment in segments.segments:
-                # TODO: threshold can be set from outside
-                if segment["no_speech_prob"] > 0.8:
-                    no_speech_segments.append((segment.get("start"), segment.get("end")))
-
-        o = []
-        for word in segments.words:
-            start = word.start
-            end = word.end
-            if any(s[0] <= start <= s[1] for s in no_speech_segments):
-                # print("Skipping word", word.get("word"), "because it's in a no-speech segment")
-                continue
-            o.append((start, end, word.word))
-        return o
-
-
-    def segments_end_ts(self, res):
-        return [s.end for s in res.words]
-
-    def transcribe(self, audio_data, prompt=None, *args, **kwargs):
-        # Write the audio data to a buffer
-        buffer = io.BytesIO()
-        buffer.name = "temp.wav"
-        sf.write(buffer, audio_data, samplerate=16000, format='WAV', subtype='PCM_16')
-        buffer.seek(0)  # Reset buffer's position to the beginning
-
-        self.transcribed_seconds += math.ceil(len(audio_data)/16000)  # it rounds up to the whole seconds
-
-        params = {
-            "model": self.modelname,
-            "file": buffer,
-            "response_format": self.response_format,
-            "temperature": self.temperature,
-            "timestamp_granularities": ["word", "segment"]
-        }
-        if self.task != "translate" and self.original_language:
-            params["language"] = self.original_language
-        if prompt:
-            params["prompt"] = prompt
-
-        if self.task == "translate":
-            proc = self.client.audio.translations
-        else:
-            proc = self.client.audio.transcriptions
-
-        # Process transcription/translation
-        transcript = proc.create(**params)
-        logger.debug(f"OpenAI API processed accumulated {self.transcribed_seconds} seconds")
-
-        return transcript
-
-    def use_vad(self):
-        self.use_vad_opt = True
-
-    def set_translate_task(self):
-        self.task = "translate"
-
-
-
-
-class HypothesisBuffer:
-
-    def __init__(self, logfile=sys.stderr):
-        self.commited_in_buffer = []
-        self.buffer = []
-        self.new = []
-
-        self.last_commited_time = 0
-        self.last_commited_word = None
-
-        self.logfile = logfile
-
-    def insert(self, new, offset):
-        # compare self.commited_in_buffer and new. It inserts only the words in new that extend the commited_in_buffer, it means they are roughly behind last_commited_time and new in content
-        # the new tail is added to self.new
-        
-        new = [(a+offset,b+offset,t) for a,b,t in new]
-        self.new = [(a,b,t) for a,b,t in new if a > self.last_commited_time-0.1]
-
-        if len(self.new) >= 1:
-            a,b,t = self.new[0]
-            if abs(a - self.last_commited_time) < 1:
-                if self.commited_in_buffer:
-                    # it's going to search for 1, 2, ..., 5 consecutive words (n-grams) that are identical in commited and new. If they are, they're dropped.
-                    cn = len(self.commited_in_buffer)
-                    nn = len(self.new)
-                    for i in range(1,min(min(cn,nn),5)+1):  # 5 is the maximum 
-                        c = " ".join([self.commited_in_buffer[-j][2] for j in range(1,i+1)][::-1])
-                        tail = " ".join(self.new[j-1][2] for j in range(1,i+1))
-                        if c == tail:
-                            words = []
-                            for j in range(i):
-                                words.append(repr(self.new.pop(0)))
-                            words_msg = " ".join(words)
-                            logger.debug(f"removing last {i} words: {words_msg}")
-                            break
-
-    def flush(self):
-        # returns commited chunk = the longest common prefix of 2 last inserts. 
-
-        commit = []
-        while self.new:
-            na, nb, nt = self.new[0]
-
-            if len(self.buffer) == 0:
-                break
-
-            if nt == self.buffer[0][2]:
-                commit.append((na,nb,nt))
-                self.last_commited_word = nt
-                self.last_commited_time = nb
-                self.buffer.pop(0)
-                self.new.pop(0)
-            else:
-                break
-        self.buffer = self.new
-        self.new = []
-        self.commited_in_buffer.extend(commit)
-        return commit
-
-    def pop_commited(self, time):
-        while self.commited_in_buffer and self.commited_in_buffer[0][1] <= time:
-            self.commited_in_buffer.pop(0)
-
-    def complete(self):
-        return self.buffer
 
 from online_processor_interface import OnlineProcessorInterface
 
@@ -594,39 +328,6 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
 
 
 
-WHISPER_LANG_CODES = "af,am,ar,as,az,ba,be,bg,bn,bo,br,bs,ca,cs,cy,da,de,el,en,es,et,eu,fa,fi,fo,fr,gl,gu,ha,haw,he,hi,hr,ht,hu,hy,id,is,it,ja,jw,ka,kk,km,kn,ko,la,lb,ln,lo,lt,lv,mg,mi,mk,ml,mn,mr,ms,mt,my,ne,nl,nn,no,oc,pa,pl,ps,pt,ro,ru,sa,sd,si,sk,sl,sn,so,sq,sr,su,sv,sw,ta,te,tg,th,tk,tl,tr,tt,uk,ur,uz,vi,yi,yo,zh".split(",")
-
-def create_tokenizer(lan):
-    """returns an object that has split function that works like the one of MosesTokenizer"""
-
-    assert lan in WHISPER_LANG_CODES, "language must be Whisper's supported lang code: " + " ".join(WHISPER_LANG_CODES)
-
-    if lan == "uk":
-        import tokenize_uk
-        class UkrainianTokenizer:
-            def split(self, text):
-                return tokenize_uk.tokenize_sents(text)
-        return UkrainianTokenizer()
-
-    # supported by fast-mosestokenizer
-    if lan in "as bn ca cs de el en es et fi fr ga gu hi hu is it kn lt lv ml mni mr nl or pa pl pt ro ru sk sl sv ta te yue zh".split():
-        from mosestokenizer import MosesTokenizer
-        return MosesTokenizer(lan)
-
-    # the following languages are in Whisper, but not in wtpsplit:
-    if lan in "as ba bo br bs fo haw hr ht jw lb ln lo mi nn oc sa sd sn so su sw tk tl tt".split():
-        logger.debug(f"{lan} code is not supported by wtpsplit. Going to use None lang_code option.")
-        lan = None
-
-    from wtpsplit import WtP
-    # downloads the model from huggingface on the first use
-    wtp = WtP("wtp-canine-s-12l-no-adapters")
-    class WtPtok:
-        def split(self, sent):
-            return wtp.split(sent, lang_code=lan)
-    return WtPtok()
-
-
 def common_args(parser):
     """shared args for simulation (this entry point) and server
     parser: argparse.ArgumentParser object
@@ -654,25 +355,6 @@ def common_args(parser):
                         help="Set the log level", default='DEBUG')
 
 
-def localagreement_args(parser):
-    parser.add_argument('--backend', type=str, default="faster-whisper", choices=["faster-whisper", "whisper_timestamped", 
-                                                                                  "openai-api","simul-forced"],
-                        help='Load only this backend for Whisper processing.')
-    parser.add_argument('--model', type=str, default='large-v2', 
-                        choices="tiny.en,tiny,base.en,base,small.en,small,medium.en,medium,large-v1,large-v2,large,large-v3-turbo".split(","),
-                        help='Name size of the Whisper model to use (default: large-v2). The model is automatically downloaded from the model '
-                        'hub if not present in model cache dir.')
-    parser.add_argument('--model_cache_dir', type=str, default=None, 
-                        help="Overriding the default model cache dir where models downloaded from the hub are saved")
-    parser.add_argument('--model_dir', type=str, default=None, 
-                        help="Dir where Whisper model.bin and other files are saved. This option overrides --model and --model_cache_dir parameter.")
-
-    parser.add_argument('--buffer_trimming', type=str, default="segment", 
-                        choices=["sentence", "segment"],
-                        help='Buffer trimming strategy -- trim completed sentences marked with punctuation mark and detected by sentence segmenter, '
-                        'and or the completed segments returned by Whisper. Sentence segmenter must be installed for "sentence" option.')
-    parser.add_argument('--buffer_trimming_sec', type=float, default=15, 
-                        help='Buffer trimming length threshold in seconds. If buffer length is longer, trimming sentence/segment is triggered.')
     
 
 
@@ -680,46 +362,11 @@ def asr_factory(args, backend=None, logfile=sys.stderr):
     """
     Creates and configures an ASR and ASR Online instance based on the specified backend and arguments.
     """
-    language = args.lan
     if backend is None:
         backend = args.backend
     if backend == "simul-whisper":
         from simul_whisper_backend import simul_asr_factory
         asr, online = simul_asr_factory(args, logfile=logfile)
-    else:
-        if backend == "openai-api":
-            logger.debug("Using OpenAI API.")
-            asr = OpenaiApiASR(lan=args.lan)
-        else:
-            if backend == "faster-whisper":
-                asr_cls = FasterWhisperASR
-            elif backend == "simul-forced":
-                from simul_whisper_backend import SimulForcedASR
-                asr_cls = SimulForcedASR
-            else:
-                asr_cls = WhisperTimestampedASR
-
-            # Only for FasterWhisperASR and WhisperTimestampedASR
-            size = args.model
-            t = time.time()
-            logger.info(f"Loading Whisper {size} model for {args.lan}...")
-            asr = asr_cls(modelsize=size, lan=args.lan, cache_dir=args.model_cache_dir, model_dir=args.model_dir)
-            e = time.time()
-            logger.info(f"done. It took {round(e-t,2)} seconds.")
-
-        # Apply common configurations
-        if getattr(args, 'vad', False):  # Checks if VAD argument is present and True
-            logger.info("Setting VAD filter")
-            asr.use_vad()
-
-        # Create the tokenizer
-        if args.buffer_trimming == "sentence":
-            tgt_language = "en" if args.task == "translate" else args.lan
-            tokenizer = create_tokenizer(tgt_language)
-        else:
-            tokenizer = None
-
-        online = OnlineASRProcessor(asr,tokenizer,logfile=logfile,buffer_trimming=(args.buffer_trimming, args.buffer_trimming_sec))
 
     # Create the OnlineASRProcessor
     if args.vac:
@@ -738,19 +385,18 @@ def set_logging(args,logger,other="_server"):
 #    logging.getLogger("whisper_online_server").setLevel(args.log_level)
 
 
-def main(entrypoint="localagreement"):
+def main(entrypoint="simulwhisper"):
 
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('audio_path', type=str, help="Filename of 16kHz mono channel wav, on which live streaming is simulated.")
     common_args(parser)
-    if entrypoint == "localagreement":
-        localagreement_args(parser)
-        backend = None
-    elif entrypoint == "simulwhisper":
+    if entrypoint == "simulwhisper":
         from simul_whisper_backend import simulwhisper_args
         simulwhisper_args(parser)
         backend = "simul-whisper"
+    else:
+        raise ValueError(f"Unknown entrypoint: {entrypoint}")
     parser.add_argument('--start_at', type=float, default=0.0, help='Start processing audio at this time.')
     parser.add_argument('--offline', action="store_true", default=False, help='Offline mode.')
     parser.add_argument('--comp_unaware', action="store_true", default=False, help='Computationally unaware simulation.')
@@ -872,10 +518,6 @@ def main(entrypoint="localagreement"):
     print("tady",o,file=sys.stderr)
     output_transcript(o, now=now)
 
-
-
 if __name__ == "__main__":
-    if "simul" in sys.argv[0]:
-        main(entrypoint="simulwhisper")
-    else:
-        main(entrypoint="localagreement")
+    main(entrypoint="simulwhisper")
+

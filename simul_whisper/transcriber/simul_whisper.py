@@ -24,7 +24,7 @@ def dprint(a):
 logger.debug = dprint
 
 
-class ForceDecodeWhisper:
+class HIDEForceDecodeWhisper:
 
     def to_torch(self, x):
         return torch.tensor(x, dtype=torch.long, device=self.model.device).unsqueeze(0)
@@ -158,7 +158,7 @@ class ForceDecodeWhisper:
         print("decoded new tokens:",t,file=sys.stderr)
         return t
 
-class PaddedAlignAttWhisper(ForceDecodeWhisper):
+class PaddedAlignAttWhisper():
     def __init__(self, cfg: AlignAttConfig) -> None:
         self.debug_iterations = 0
         model_name = os.path.basename(cfg.model_path).replace(".pt", "")

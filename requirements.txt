@@ -1,0 +1,17 @@
+# dependency from WhisperStreaming:
+librosa
+
+# for using Silero VAD with WhisperStreaming, torchaudio is needed
+torchaudio
+
+# from SimulWhisper
+torch
+
+# from Whisper
+tqdm
+tiktoken
+
+# both Whisper and SimulWhisper. SimulWhisper requires <3
+triton>=2.0.0,<3;platform_machine=="x86_64" and sys_platform=="linux" or sys_platform=="linux2"
+
+
