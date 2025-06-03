@@ -1,12 +1,11 @@
 from whisper_streaming.base import OnlineProcessorInterface, ASRBase
-import numpy as np
 import argparse
 
 import sys
 import torch
 
-from simul_whisper.transcriber.config import AlignAttConfig
-from simul_whisper.transcriber.simul_whisper import PaddedAlignAttWhisper, DEC_PAD
+from simul_whisper.config import AlignAttConfig
+from simul_whisper.simul_whisper import PaddedAlignAttWhisper, DEC_PAD
 from simul_whisper.whisper import tokenizer
 
 def simulwhisper_args(parser):
@@ -104,7 +103,6 @@ class SimulWhisperASR(ASRBase):
                                                              task="translate")
 
 
-                
 class SimulWhisperOnline(OnlineProcessorInterface):
     def __init__(self, asr, logfile=sys.stderr):
         self.logfile = logfile
@@ -167,22 +165,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         return o
     
 
-
 if __name__ == "__main__":
-    # demo code, to check if it runs or crashes. It processes one second
-    import argparse
-    from whisper_streaming.whisper_online_main import processor_args, simulation_args, load_audio_chunk
-    parser = argparse.ArgumentParser()
-    processor_args(parser)
-    simulation_args(parser)
-    simulwhisper_args(parser)
-    args = parser.parse_args()
-    asr, online = simul_asr_factory(args)
 
-    audio = load_audio_chunk(args.audio_path ,0,1)
-    online.insert_audio_chunk(audio)
-    p = online.process_iter()
-    print(p)
-
-    p = online.finish()
-    print(p)
+    from whisper_streaming.whisper_online_main import main_simulation_from_file
+    main_simulation_from_file(simul_asr_factory, add_args=simulwhisper_args)
