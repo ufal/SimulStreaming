@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
-# this code is retrieved from the original WhisperStreaming whisper_online.py . Only the code that is maintained with the SimulWhisper backend is kept. 
+# This code is retrieved from the original WhisperStreaming whisper_online.py .
+# It is refactored and simplified. Only the code that is needed for the 
+# SimulWhisper backend is kept. 
 
 
 import sys
@@ -31,22 +33,24 @@ def processor_args(parser):
     """shared args for the online processors
     parser: argparse.ArgumentParser object
     """
-    parser.add_argument('--min-chunk-size', type=float, default=1.0, 
+    group = parser.add_argument_group("WhisperStreaming processor arguments (shared for simulation from file and for the server)")
+    group.add_argument('--min-chunk-size', type=float, default=1.0, 
                         help='Minimum audio chunk size in seconds. It waits up to this time to do processing. If the processing takes shorter '
                         'time, it waits, otherwise it processes the whole segment that was received by this time.')
 
 
-    parser.add_argument('--lan', '--language', type=str, default='auto', 
-                        help="Source language code, e.g. en,de,cs, or 'auto' for language detection.")
-    parser.add_argument('--task', type=str, default='transcribe', 
+    group.add_argument('--lan', '--language', type=str, default="en", 
+                        # TODO: add option for "auto" language detection
+                        help="Source language code, e.g. en,de,cs.")
+    group.add_argument('--task', type=str, default='transcribe', 
                         choices=["transcribe","translate"],
                         help="Transcribe or translate.")
 
-    parser.add_argument('--vac', action="store_true", default=False, 
+    group.add_argument('--vac', action="store_true", default=False, 
                         help='Use VAC = voice activity controller. Recommended. Requires torch.')
-    parser.add_argument('--vac-chunk-size', type=float, default=0.04, 
+    group.add_argument('--vac-chunk-size', type=float, default=0.04, 
                         help='VAC sample size in seconds.')
-    parser.add_argument('--vad', action="store_true", default=False, 
+    group.add_argument('--vad', action="store_true", default=False, 
                         help='Use VAD = voice activity detection, with the default parameters.')
 
     parser.add_argument("-l", "--log-level", dest="log_level", 
@@ -83,14 +87,15 @@ def set_logging(args,logger,other="_server"):
 
 
 def simulation_args(parser):
-    parser.add_argument('audio_path', type=str, help="Filename of 16kHz mono channel wav, on which live streaming is simulated.")
-    parser.add_argument('--start_at', type=float, default=0.0, help='Start processing audio at this time.')
-    parser.add_argument('--offline', action="store_true", default=False, help='Offline mode.')
-    parser.add_argument('--comp_unaware', action="store_true", default=False, help='Computationally unaware simulation.')
+    simulation_group = parser.add_argument_group("Arguments for simulation from file")
+    simulation_group.add_argument('audio_path', type=str, help="Filename of 16kHz mono channel wav, on which live streaming is simulated.")
+    simulation_group.add_argument('--start_at', type=float, default=0.0, help='Start processing audio at this time.')
+    simulation_group.add_argument('--offline', action="store_true", default=False, help='Offline mode.')
+    simulation_group.add_argument('--comp_unaware', action="store_true", default=False, help='Computationally unaware simulation.')
 
 def main_simulation_from_file(factory, add_args=None):
     '''
-    factory: function that creates the ASR and online processor object from args and logger. It is implemented in the backend family, such as simul_whisper_backend.py, 
+    factory: function that creates the ASR and online processor object from args and logger.  
             or in the default WhisperStreaming local agreement backends (not implemented but could be).
     add_args: add specific args for the backend
     '''
