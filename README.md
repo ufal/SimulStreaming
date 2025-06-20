@@ -126,7 +126,7 @@ Simulation modes:
 - offline mode, to process whole audio with maximum quality, is not available yet. Instead, try large `--min-chunk-size` and `--frame-threshold`.
 
 
-**Usage as a server with mic input, or as a module:** TODO. Analogical to WhisperStreaming.
+**Usage as a server with mic input, or as a module:** TODO. Analogical to [WhisperStreaming](https://github.com/ufal/whisper_streaming?tab=readme-ov-file#server----real-time-from-mic).
 
 ### Output format
 
@@ -177,12 +177,17 @@ prioritize development. Therefore, we want to **require registration** of those 
 
 We plan to make the commercial licenceses **affordable** to SMEs and individuals. We
 are considering to provide commercial licenses either for free or for symbolic
-one-time fee, and maybe also providing additional support. You can leave your suggestion via the [questionnaire](https://forms.cloud.microsoft/e/7tCxb4gJfB).
+one-time fee, and maybe also provide additional support. You can share your preference via the [questionnaire](https://forms.cloud.microsoft/e/7tCxb4gJfB).
 
-You can also leave your contact to be notified when the commercial licenses become
+You can also leave your contact [there](https://forms.cloud.microsoft/e/7tCxb4gJfB) to be notified when the commercial licenses become
 available.
 
-## Contact
+### 🤝 Contributions
+
+Contributions to SimulStreaming are welcome. 
+Before a pull request will be merged, contributors will be kindly asked to agree to the dual licensing terms of SimulStreaming. 
+
+## ✉️ Contact
 
 [Dominik Macháček](https://ufal.mff.cuni.cz/dominik-machacek/), machacek@ufal.mff.cuni.cz
 
