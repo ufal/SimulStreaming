@@ -149,83 +149,40 @@ It's space-separated. The first three columns are:
 - column 4: This column starts either with a space, if the previous line had to be appended with a space, or with a character that has to be appended to the previous line (like comma or dot).
 
 
-## Feedback welcome!
 
-We, the authors of SimulStreaming from Charles University,
-wish to continue with our research and do it better. We see an opportunity to
-involve feedback from those who use SimulStreaming in our future work.
-Therefore, we kindly ask all users of SimulStreaming to fill a questionnaire at this link: TODO. We wish to learn from you:
+## 📣 Feedback Welcome!
 
-- who are you? Student/teacher/academic/private person/non-profit/enterpreneur, founder/small or medium enterprise/enterprise that is not small or medium
-- what is your intent in using SimulStreaming? On what kind of content, what language(s), translate or transcribe? What latency?
-- what are the biggest challenges or issues you face? 
-- what HW? laptop/GPU server/HPC cluster/mobile or other devices?
-- do you wish more services or support of the author?
- - replying on GitHub issues
- - consultation whether SimulStreaming is the right choice for me
- - support with installation on my HW
- - advice for optimal model and parameters
- - experiments for optimal model and parameters
- - SimulStreaming via API (software as a service)
- - SimulStreaming in an application, including front-end
+We, the authors of SimulStreaming from Charles University, are committed to
+improving our research and the tool itself. Your experience as a user is
+invaluable to us --- it can help to shape upcoming features, licensing models, and support services. 
 
-Contributions:
-- would you contribute to SimulStreaming with bug fixes and new features?
- - yes. And I would permit authors to use my code contribution in any way
- - yes only if SimulStreaming would be licenced freely and openly, e.g. under MIT or Apache 2
- - no
- - other: ...
-
-Commercialization:
-- are you considering to use SimulStreaming commercially? yes/no
-
-If yes:
-- would you go acquire commercial licence for SimulStreaming through these steps?
- - Getting a free commercial licence from GitHub directly, without anything else
- - Register who you are, get a free unlimited commercial licence
- - Register, pay symbolic 1 euro, get an unlimited commercial licence
- - Register, pay an amount I choose, get an unlimited commercial licence
- - Register, pay, get an unlimited commercial licence and a time-limited support
- - Register, pay a subscription plan for SimulStreaming via API
-
-- How much would you pay for commercial licence of SimulStreaming? 
-
-- Do you wish to be notified as soon as the commercial licence distribution is ready? yes/no
-- Do you wish to be contacted by the authors for a feedback? yes+who you are+contact / no
-
-Moreover, to collect valuable statistics, publish this code openly under a non-commercial licence. 
+To better understand your needs and guide the future of
+SimulStreaming, we kindly ask you to fill out this **[questionnaire](https://forms.cloud.microsoft/e/7tCxb4gJfB).**
 
 
+## 📄 Licence and Contributions
 
-## Licence and Contributions
+SimulStreaming is dual-licensed:
 
-This code is dual-licensed. You can use SimulStreaming under PolyForm Noncommercial License 1.0.0, if you acquire a copy of this code through GitHub repo. 
+### 🔹 Non-Commercial Use
 
-**Please, give feedback** We, the authors of SimulStreaming at Charles University,
-wish to continue with our research and do it better. We see an opportunity to
-involve feedback from the users of SimulStreaming in future work. 
+You may use SimulStreaming under the **PolyForm Noncommercial License 1.0.0** if you
+obtain the code through the GitHub repository.  This license is **free of charge**
+and comes with **no obligations** for non-commercial users.
 
-Therefore, we kindly ask all users of SimulStreaming to fill a questionnaire at this link: 
+### 🔸 Commercial Use
 
-**Commercial licence** We are considering to provide commercial licenses for a symbolic fee or for free.
-If are interested to use SimulStreaming commercially,
-*please fill the questionnaire and leave us your contact. We are considering to provide commercial licenses for a symbolic fee or for free.
+Understanding who uses SimulStreaming commercially helps us improve and
+prioritize development. Therefore, we want to **require registration** of those who acquire a commercial licence.
 
+We plan to make the commercial licenceses **affordable** to SMEs and individuals. We
+are considering to provide commercial licenses either for free or for symbolic
+one-time fee, and maybe also providing additional support. You can leave your suggestion via the [questionnaire](https://forms.cloud.microsoft/e/7tCxb4gJfB).
 
-Therefore, we plan to provide commercial licences to those who
-register and voluntarily also share their feedback or pay a small symbolic fee.
-
-**Commercial licence**
-The authors are currently working on a
-seamless authomatic way to distribute the commercial licences, and on improving their service to users.
-
-The authors are planning easy automatic way to distribute the licences. 
-
-Read more information in [COMMERCIAL.md](COMMERCIAL.md).
-
-**Contributions** are welcome. You will be asked to 
+You can also leave your contact to be notified when the commercial licenses become
+available.
 
 ## Contact
 
-Dominik Macháček, machacek@ufal.mff.cuni.cz
+[Dominik Macháček](https://ufal.mff.cuni.cz/dominik-machacek/), machacek@ufal.mff.cuni.cz
 
