@@ -19,24 +19,32 @@ def simulwhisper_args(parser):
     group = parser.add_argument_group('Audio buffer')
     group.add_argument('--audio_max_len', type=float, default=30.0, 
                         help='Max length of the audio buffer, in seconds.')
-    group.add_argument('--audio_min_len', type=float, default=3.0, 
+    group.add_argument('--audio_min_len', type=float, default=0.0, 
                         help='Skip processing if the audio buffer is shorter than this length, in seconds. Useful when the --min-chunk-size is small.')
 
 
     group = parser.add_argument_group('AlignAtt argument')
-    group.add_argument('--frame_threshold', type=int, default=24, 
-                        help='Threshold for the attention-guided decoding, in frames.')
+    group.add_argument('--frame_threshold', type=int, default=25, 
+                        help='Threshold for the attention-guided decoding. The AlignAtt policy will decode only ' \
+                            'until this number of frames from the end of audio. In frames: one frame is 0.02 seconds for large-v3 model. ')
 
-    group = parser.add_argument_group('Simul-Whisper\'s end-of-word detection')
-    group.add_argument('--if_ckpt_path', type=str, default=None, 
-                        help='The file path to the Simul-CIF checkpoint model. Align with the Whisper model, e.g., using small.pt for Whisper small.')
-    group.add_argument("--never_fire", action=argparse.BooleanOptionalAction, default=False, help="Override CIF model. If True, CIF model will never fire. If False: if CIF model path is set, it triggers it, otherwise it always fires.")
-#    group.add_argument('--segment_length', type=float, default=0.1, help='Chunk length, in seconds.')
+    group = parser.add_argument_group('Truncation of the last decoded word (from Simul-Whisper)')
+    group.add_argument('--cif_ckpt_path', type=str, default=None, 
+                        help='The file path to the Simul-Whisper\'s CIF model checkpoint that detects whether there is' \
+                        'end of word at the end of the chunk. If not, the last decoded space-separated word is truncated ' \
+                        'because it is often wrong -- transcribing a word in the middle.' \
+                        'The CIF model adapted for the Whisper model version should be used. ' \
+                        'Find the models in https://github.com/backspacetg/simul_whisper/tree/main/cif_models . ' \
+                        'Note that there is no model for large-v3.')
+    group.add_argument("--never_fire", action=argparse.BooleanOptionalAction, default=False, 
+                       help="Override the CIF model. If True, the last word is NEVER truncated, no matter what the CIF model detects. " \
+                       ". If False: if CIF model path is set, the last word is SOMETIMES truncated, depending on the CIF detection. " \
+                        "Otherwise, if the CIF model path is not set, the last word is ALWAYS trimmed.")
 
     group = parser.add_argument_group("Prompt and context")
     group.add_argument("--init_prompt",type=str, default=None, help="Init prompt for the model. It should be in the target language.")
     group.add_argument("--static_init_prompt",type=str, default=None, help="Do not scroll over this text. It can contain terminology that should be relevant over all document.")
-    group.add_argument("--max_context_tokens",type=int, default=None, help="Max context tokens for the model.")
+    group.add_argument("--max_context_tokens",type=int, default=None, help="Max context tokens for the model. Default is 0.")
 
 
 def simul_asr_factory(args, logfile=sys.stderr):
@@ -55,7 +63,7 @@ def simul_asr_factory(args, logfile=sys.stderr):
             raise ValueError("Invalid decoder type. Use 'beam' or 'greedy'.")
         # else: it is greedy or beam, that's ok 
     
-    a = { v:getattr(args, v) for v in ["model_path", "if_ckpt_path", "frame_threshold", "audio_min_len", "audio_max_len", "beams", "task",
+    a = { v:getattr(args, v) for v in ["model_path", "cif_ckpt_path", "frame_threshold", "audio_min_len", "audio_max_len", "beams", "task",
                                        "never_fire", 'init_prompt', 'static_init_prompt', 'max_context_tokens'
                                        ]}
     a["language"] = args.lan
@@ -74,7 +82,7 @@ class SimulWhisperASR(ASRBase):
     
     sep = " "
 
-    def __init__(self, language, model_path, if_ckpt_path, frame_threshold, audio_max_len, audio_min_len, segment_length, beams, task, 
+    def __init__(self, language, model_path, cif_ckpt_path, frame_threshold, audio_max_len, audio_min_len, segment_length, beams, task, 
                  decoder_type, never_fire, init_prompt, static_init_prompt, max_context_tokens, logfile=sys.stderr):
         self.logfile = logfile
         cfg = AlignAttConfig(
@@ -84,7 +92,7 @@ class SimulWhisperASR(ASRBase):
             language=language,
             audio_max_len=audio_max_len, 
             audio_min_len=audio_min_len,
-            if_ckpt_path=if_ckpt_path,
+            cif_ckpt_path=cif_ckpt_path,
             decoder_type=decoder_type, #"greedy" if beams==1 else "beam",
             beam_size=beams,
             task=task,

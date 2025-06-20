@@ -34,7 +34,7 @@ def processor_args(parser):
     parser: argparse.ArgumentParser object
     """
     group = parser.add_argument_group("WhisperStreaming processor arguments (shared for simulation from file and for the server)")
-    group.add_argument('--min-chunk-size', type=float, default=1.0, 
+    group.add_argument('--min-chunk-size', type=float, default=1.2, 
                         help='Minimum audio chunk size in seconds. It waits up to this time to do processing. If the processing takes shorter '
                         'time, it waits, otherwise it processes the whole segment that was received by this time.')
 
@@ -90,7 +90,8 @@ def simulation_args(parser):
     simulation_group = parser.add_argument_group("Arguments for simulation from file")
     simulation_group.add_argument('audio_path', type=str, help="Filename of 16kHz mono channel wav, on which live streaming is simulated.")
     simulation_group.add_argument('--start_at', type=float, default=0.0, help='Start processing audio at this time.')
-    simulation_group.add_argument('--offline', action="store_true", default=False, help='Offline mode.')
+    # TODO: offline mode is not implemented in SimulStreaming yet
+#    simulation_group.add_argument('--offline', action="store_true", default=False, help='Offline mode.')
     simulation_group.add_argument('--comp_unaware', action="store_true", default=False, help='Computationally unaware simulation.')
 
 def main_simulation_from_file(factory, add_args=None):
@@ -110,6 +111,7 @@ def main_simulation_from_file(factory, add_args=None):
     simulation_args(parser)
 
     args = parser.parse_args()
+    args.offline = False  # TODO: offline mode is not implemented in SimulStreaming yet
 
     # reset to store stderr to different file stream, e.g. open(os.devnull,"w")
     logfile = sys.stderr
