@@ -128,7 +128,29 @@ Simulation modes:
 
 **Usage as a server with mic input, or as a module:** TODO. Analogical to [WhisperStreaming](https://github.com/ufal/whisper_streaming?tab=readme-ov-file#server----real-time-from-mic).
 
+### Server -- real-time from mic 
+
+The entry point `simulstreaming_whisper_server.py` has the same model options as `simulstreaming_whisper.py`, plus `--host` and `--port` of the TCP connection and the `--warmup-file`. The warmup file is decoded by the Whisper backend after the model is loaded because without that, processing of the very the first input chunk may take longer.
+
+See the help message (`-h` option).
+
+**Linux** client example:
+
+```
+arecord -f S16_LE -c1 -r 16000 -t raw -D default | nc localhost 43001
+```
+
+- `arecord` sends realtime audio from a sound device (e.g. mic), in raw audio format -- 16000 sampling rate, mono channel, S16_LE -- signed 16-bit integer low endian. (Or other operating systems, use another alternative)
+
+- nc is netcat with server's host and port
+
+**Windows/Mac**: `ffmpeg` may substitute `arecord`. Or use the solutions proposed in Whisper-Streaming pull requests [#111](https://github.com/ufal/whisper_streaming/pull/111) and [#123](https://github.com/ufal/whisper_streaming/pull/123).
+
+
+
 ### Output format
+
+This is example of the output format of the simulation from file. The output from the server is the same except that the first space-separated column is not there.
 
 ```
 1200.0000 0 1200  And so
@@ -144,9 +166,9 @@ Simulation modes:
 ```
 
 It's space-separated. The first three columns are:
-- column 1: the emission time of that line, in miliseconds. In `--comp_unaware` mode, it's the simulated time.
+- column 1: the emission time of that line, in miliseconds. In `--comp_unaware` mode, it's the simulated time. In server, this column is not there.
 - columns 2-3: the beginning and end timestamp of the line in original audio. (TODO: it should be, currently it is very rough approximation.)
-- column 4: This column starts either with a space, if the previous line had to be appended with a space, or with a character that has to be appended to the previous line (like comma or dot).
+- columns 4-: This column starts either with a space, if the previous line had to be appended with a space, or with a character that has to be appended to the previous line (like comma or dot).
 
 
 
