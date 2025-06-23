@@ -17,8 +17,8 @@ simple demo TCP server that can be connected to microphone.
 Moreover, SimulStreaming adds a machine translation model EuroLLM in a cascade, with LocalAgreement simultaneous policy, system
 prompt, and in-context example.
 
-SimulStreaming originates as Charles University (CUNI) submission to the IWSLT
-2025 Simultaneous Shared Task. The results show that this system is extremely robust
+SimulStreaming originates as [Charles University (CUNI) submission to the IWSLT
+2025 Simultaneous Shared Task](https://arxiv.org/abs/2506.17077). The results show that this system is extremely robust
 and high quality. It is among the top performing systems in IWSLT 2025
 Simultaneous Shared Task.
 
@@ -125,8 +125,6 @@ Simulation modes:
 
 - offline mode, to process whole audio with maximum quality, is not available yet. Instead, try large `--min-chunk-size` and `--frame-threshold`.
 
-
-**Usage as a server with mic input, or as a module:** TODO. Analogical to [WhisperStreaming](https://github.com/ufal/whisper_streaming?tab=readme-ov-file#server----real-time-from-mic).
 
 ### Server -- real-time from mic 
 
