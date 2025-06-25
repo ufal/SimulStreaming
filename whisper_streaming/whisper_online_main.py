@@ -160,6 +160,7 @@ def main_simulation_from_file(factory, add_args=None):
         start_ts, end_ts, text = o
         if start_ts is not None and end_ts is not None:
             logger.info(f"{now * 1000:.4f} {start_ts * 1000:.0f} {end_ts * 1000:.0f} {text}")
+            print(f"{now * 1000:.4f} {start_ts * 1000:.0f} {end_ts * 1000:.0f} {text}", flush=True)
             
     if args.offline: ## offline mode processing (for testing/debugging)
         a = load_audio(audio_path)
