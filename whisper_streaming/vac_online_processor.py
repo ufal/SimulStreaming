@@ -2,6 +2,9 @@ from whisper_streaming.base import OnlineProcessorInterface
 from whisper_streaming.silero_vad_iterator import FixedVADIterator
 import numpy as np
 
+import logging
+logger = logging.getLogger(__name__)
+
 class VACOnlineASRProcessor(OnlineProcessorInterface):
     '''Wraps OnlineASRProcessor with VAC (Voice Activity Controller). 
 
@@ -23,7 +26,6 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
         )
         self.vac = FixedVADIterator(model)  # we use the default options there: 500ms silence, 100ms padding, etc.  
 
-        self.logfile = self.online.logfile
         self.init()
 
     def init(self):
@@ -92,7 +94,7 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
             ret = self.online.process_iter()
             return ret
         else:
-            print("no online update, only VAD", self.status, file=self.logfile)
+            logger.info(f"no online update, only VAD. {self.status}")
             return (None, None, "")
 
     def finish(self):
