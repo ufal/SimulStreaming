@@ -26,9 +26,6 @@ def load_audio_chunk(fname, beg, end):
     end_s = int(end*16000)
     return audio[beg_s:end_s]
 
-
-
-
 def processor_args(parser):
     """shared args for the online processors
     parser: argparse.ArgumentParser object
@@ -58,7 +55,7 @@ def processor_args(parser):
                         help="Set the log level", default='DEBUG')
 
 
-def asr_factory(args, factory=None, logfile=sys.stderr):
+def asr_factory(args, factory=None):
     """
     Creates and configures an asr and online processor object through factory that is implemented in the backend.
     """
@@ -66,7 +63,7 @@ def asr_factory(args, factory=None, logfile=sys.stderr):
 #        backend = args.backend
 #    if backend == "simul-whisper":
 #        from simul_whisper_backend import simul_asr_factory
-    asr, online = factory(args, logfile=logfile)
+    asr, online = factory(args)
 
     # Create the OnlineASRProcessor
     if args.vac:
@@ -78,12 +75,14 @@ def asr_factory(args, factory=None, logfile=sys.stderr):
 
     return asr, online
 
-def set_logging(args,logger,other="_server"):
-    logging.basicConfig(#format='%(name)s 
+def set_logging(args,logger):
+    logging.basicConfig(
+        # this format would include module name:
+        #    format='%(levelname)s\t%(name)s\t%(message)s')
             format='%(levelname)s\t%(message)s')
     logger.setLevel(args.log_level)
-    logging.getLogger("whisper_online"+other).setLevel(args.log_level)
-#    logging.getLogger("whisper_online_server").setLevel(args.log_level)
+    logging.getLogger("simul_whisper").setLevel(args.log_level)
+    logging.getLogger("whisper_streaming").setLevel(args.log_level)
 
 
 def simulation_args(parser):
@@ -113,16 +112,9 @@ def main_simulation_from_file(factory, add_args=None):
     args = parser.parse_args()
     args.offline = False  # TODO: offline mode is not implemented in SimulStreaming yet
 
-    # reset to store stderr to different file stream, e.g. open(os.devnull,"w")
-    logfile = sys.stderr
-
     if args.offline and args.comp_unaware:
         logger.error("No or one option from --offline and --comp_unaware are available, not both. Exiting.")
         sys.exit(1)
-
-#    if args.log_level:
-#        logging.basicConfig(format='whisper-%(levelname)s:%(name)s: %(message)s',
-#                            level=getattr(logging, args.log_level))
 
     set_logging(args,logger)
 
@@ -132,7 +124,7 @@ def main_simulation_from_file(factory, add_args=None):
     duration = len(load_audio(audio_path))/SAMPLING_RATE
     logger.info("Audio duration is: %2.2f seconds" % duration)
 
-    asr, online = asr_factory(args, factory, logfile=logfile)
+    asr, online = asr_factory(args, factory)
     if args.vac:
         min_chunk = args.vac_chunk_size
     else:
@@ -159,7 +151,7 @@ def main_simulation_from_file(factory, add_args=None):
 
         start_ts, end_ts, text = o
         if start_ts is not None and end_ts is not None:
-            logger.info(f"{now * 1000:.4f} {start_ts * 1000:.0f} {end_ts * 1000:.0f} {text}")
+            logger.debug(f"{now * 1000:.4f} {start_ts * 1000:.0f} {end_ts * 1000:.0f} {text}")
             print(f"{now * 1000:.4f} {start_ts * 1000:.0f} {end_ts * 1000:.0f} {text}", flush=True)
             
     if args.offline: ## offline mode processing (for testing/debugging)
@@ -185,7 +177,7 @@ def main_simulation_from_file(factory, add_args=None):
             else:
                 output_transcript(o, now=end)
 
-            logger.debug(f"## last processed {end:.2f}s")
+            logger.info(f"## last processed {end:.2f}s")
 
             if end >= duration:
                 break
@@ -217,7 +209,7 @@ def main_simulation_from_file(factory, add_args=None):
             else:
                 output_transcript(o)
             now = time.time() - start
-            logger.debug(f"## last processed {end:.2f} s, now is {now:.2f}, the latency is {now-end:.2f}")
+            logger.info(f"## last processed {end:.2f} s, now is {now:.2f}, the latency is {now-end:.2f}")
 
             if end >= duration:
                 break

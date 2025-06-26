@@ -153,7 +153,7 @@ def main_server(factory, add_args):
 
     args = parser.parse_args()
 
-    set_logging(args,logger,other="")
+    set_logging(args,logger)
 
     # setting whisper object by args 
 

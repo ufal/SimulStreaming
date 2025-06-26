@@ -51,7 +51,7 @@ def simulwhisper_args(parser):
     group.add_argument("--max_context_tokens",type=int, default=None, help="Max context tokens for the model. Default is 0.")
 
 
-def simul_asr_factory(args, logfile=sys.stderr):
+def simul_asr_factory(args):
     decoder = args.decoder
     if args.beams > 1:
         if decoder == "greedy":
@@ -79,16 +79,15 @@ def simul_asr_factory(args, logfile=sys.stderr):
     if args.audio_min_len > args.audio_max_len:
         raise ValueError("audio_min_len must be smaller than audio_max_len")
     logger.info(f"Arguments: {a}")
-    asr = SimulWhisperASR(**a,logfile=logfile)
-    return asr, SimulWhisperOnline(asr, logfile)
+    asr = SimulWhisperASR(**a)
+    return asr, SimulWhisperOnline(asr)
 
 class SimulWhisperASR(ASRBase):
     
     sep = " "
 
     def __init__(self, language, model_path, cif_ckpt_path, frame_threshold, audio_max_len, audio_min_len, segment_length, beams, task, 
-                 decoder_type, never_fire, init_prompt, static_init_prompt, max_context_tokens, logfile=sys.stderr):
-        self.logfile = logfile
+                 decoder_type, never_fire, init_prompt, static_init_prompt, max_context_tokens):
         cfg = AlignAttConfig(
             model_path=model_path, 
             segment_length=segment_length,
@@ -127,8 +126,7 @@ class SimulWhisperASR(ASRBase):
 
 
 class SimulWhisperOnline(OnlineProcessorInterface):
-    def __init__(self, asr, logfile=sys.stderr):
-        self.logfile = logfile
+    def __init__(self, asr):
         self.model = asr.model
         self.init()
 
