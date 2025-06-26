@@ -2,11 +2,15 @@ from whisper_streaming.base import OnlineProcessorInterface, ASRBase
 import argparse
 
 import sys
+import logging
 import torch
 
 from simul_whisper.config import AlignAttConfig
 from simul_whisper.simul_whisper import PaddedAlignAttWhisper, DEC_PAD
 from simul_whisper.whisper import tokenizer
+
+logger = logging.getLogger(__name__)
+
 
 def simulwhisper_args(parser):
     group = parser.add_argument_group('Whisper arguments')
@@ -74,7 +78,7 @@ def simul_asr_factory(args, logfile=sys.stderr):
         raise ValueError("min_chunk_size must be smaller than audio_max_len")
     if args.audio_min_len > args.audio_max_len:
         raise ValueError("audio_min_len must be smaller than audio_max_len")
-    print("INFO\tArguments:\n", a,file=sys.stderr)
+    logger.info(f"Arguments: {a}")
     asr = SimulWhisperASR(**a,logfile=logfile)
     return asr, SimulWhisperOnline(asr, logfile)
 
@@ -101,12 +105,12 @@ class SimulWhisperASR(ASRBase):
             max_context_tokens=max_context_tokens,
             static_init_prompt=static_init_prompt,
         )
-        print(language,file=sys.stderr)
+        logger.info(f"Language: {language}")
         self.model = PaddedAlignAttWhisper(cfg)
 
     def transcribe(self, audio, init_prompt=""):
         x = self.model.infer(audio, init_prompt=init_prompt)
-        print(x,file=sys.stderr)
+        logger.debug(f"Transcription: {x}")
         return x
 
     def warmup(self, audio, init_prompt=""):
@@ -169,14 +173,13 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         e = self.end
         self.beg = self.end
         
-        print(result,file=sys.stderr)
-        print("last attend frame",self.model.last_attend_frame,file=sys.stderr)
-        print(self.model.max_text_len, file=sys.stderr)
-        for i in range(3): print(file=sys.stderr)
+        logger.debug(f"Result: {result}")
+        logger.debug(f"Last attend frame: {self.model.last_attend_frame}")
+        logger.debug(f"Max text length: {self.model.max_text_len}")
         return (b,e,result)
 
     def finish(self):
-        print("FINISH",file=sys.stderr)
+        logger.info("Finish")
         self.is_last = True
         #self.insert_audio_chunk(np.array([],dtype=np.float32))
         o = self.process_iter()

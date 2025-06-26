@@ -155,14 +155,13 @@ def main_simulation_from_file(factory, add_args=None):
         #    - beg and end timestamp of the text segment, as estimated by Whisper model. The timestamps are not accurate, but they're useful anyway
         # - the next words: segment transcript
         if now is None:
-            now = time.time()-start
-        if o[0] is not None:
-            print("%1.4f %1.0f %1.0f %s" % (now*1000, o[0]*1000,o[1]*1000,o[2]),file=logfile,flush=True)
-            print("%1.4f %1.0f %1.0f %s" % (now*1000, o[0]*1000,o[1]*1000,o[2]),flush=True)
-        else:
-            # No text, so no output
-            pass
+            now = time.time() - start
 
+        start_ts, end_ts, text = o
+        if start_ts is not None and end_ts is not None:
+            logger.info(f"{now * 1000:.4f} {start_ts * 1000:.0f} {end_ts * 1000:.0f} {text}")
+            print(f"{now * 1000:.4f} {start_ts * 1000:.0f} {end_ts * 1000:.0f} {text}", flush=True)
+            
     if args.offline: ## offline mode processing (for testing/debugging)
         a = load_audio(audio_path)
         online.insert_audio_chunk(a)
@@ -225,5 +224,4 @@ def main_simulation_from_file(factory, add_args=None):
         now = None
 
     o = online.finish()
-    print("tady",o,file=sys.stderr)
     output_transcript(o, now=now)
