@@ -10,7 +10,8 @@ from .whisper import load_model, DecodingOptions, tokenizer
 from .config import AlignAttConfig
 from .whisper.audio import log_mel_spectrogram, TOKENS_PER_SECOND, pad_or_trim, N_SAMPLES, N_FRAMES
 from .whisper.timing import median_filter
-from .whisper.decoding import SuppressBlank, GreedyDecoder, BeamSearchDecoder, SuppressTokens, PyTorchInference
+from .whisper.decoding import SuppressBlank, GreedyDecoder, BeamSearchDecoder, SuppressTokens
+from .beam import BeamPyTorchInference
 import os
 
 from token_buffer import TokenBuffer
@@ -78,16 +79,11 @@ class PaddedAlignAttWhisper:
         
         self.kv_cache = {}
         def kv_hook(module: torch.nn.Linear, _, net_output: torch.Tensor):
-#            return net_output
-            #print(net_output.shape, "net_output shape", file=sys.stderr)
             if module.cache_id not in self.kv_cache or net_output.shape[1] > self.max_text_len:
                 # save as-is, for the first token or cross attention
                 self.kv_cache[module.cache_id] = net_output
             else:
                 x = self.kv_cache[module.cache_id]
-            #    print(x.shape, "x shape", file=sys.stderr)
-            #    print(module.cache_id, file=sys.stderr)
-            #    print(module, file=sys.stderr)
                 self.kv_cache[module.cache_id] = torch.cat([x, net_output], dim=1).detach()
             return self.kv_cache[module.cache_id] 
 
@@ -122,9 +118,6 @@ class PaddedAlignAttWhisper:
                 # self.tokenizer.eot 
                 self.tokenizer.no_timestamps,  # added by DM
             ] + list(self.tokenizer.all_language_tokens)  # added by DM
-            #self.tokenizer.special_tokens
-        #suppress_tokens = [v for v in self.tokenizer.special_tokens.values() if v != self.tokenizer.eot]
-        #print(sorted(self.tokenizer.special_tokens.values()), file=sys.stderr)
         if self.tokenizer.no_speech is not None:
             suppress_tokens.append(self.tokenizer.no_speech)
         suppress_tokens =  tuple(sorted(set(suppress_tokens)))
@@ -136,10 +129,9 @@ class PaddedAlignAttWhisper:
         self.suppres_blank = suppress_blank_logits
         sup_tokens = SuppressTokens(suppress_tokens)
         self.suppress_tokens = lambda logits: sup_tokens.apply(logits, None)
-#        self.logit_filters = [
-#            SuppressBlank(self.tokenizer, self.initial_token_length),
-#            SuppressTokens(suppress_tokens)
-#            ]
+
+
+        # decoder type
         if cfg.decoder_type == "greedy":
             logger.info("Using greedy decoder")
             self.token_decoder = GreedyDecoder(0.0, self.tokenizer.eot)
@@ -147,55 +139,10 @@ class PaddedAlignAttWhisper:
 
         elif cfg.decoder_type == "beam":
             self.decoder_type = "beam"
-
-            class MyPyTorchInference(PyTorchInference):
-
-                def _kv_modules(self):
-                    key_modules = [block.attn.key.cache_id for block in self.model.decoder.blocks]
-                    value_modules = [block.attn.value.cache_id for block in self.model.decoder.blocks]
-                    return key_modules + value_modules
-
-
-                # def __init__(self, model, initial_token_length, kv_cache):
-                #     super().__init__(model, initial_token_length)
-                #     self.kv_cache = {}
-                def rearrange_kv_cache(self, source_indices):
-                    #return
-                    #source_indices = source_indices[:1]
-                    #print("source_indices",source_indices, file=sys.stderr)
-                    if source_indices != list(range(len(source_indices))):
-                        #print("tady",file=sys.stderr)
-                        for module_cache_id in self._kv_modules():
-                            # update the key/value cache to contain the selected sequences
-                            #print("before",self.kv_cache[module].shape, file=sys.stderr)
-#                            print("before",self.kv_cache[module], file=sys.stderr)
-
-                            self.kv_cache[module_cache_id] = self.kv_cache[module_cache_id][source_indices].detach()
-                            #print("after",self.kv_cache[module].shape, file=sys.stderr)
-                            #print("after",self.kv_cache[module], file=sys.stderr)
-
-                    # else:
-                    #     print("HHHHHHHHHHHHHHHHHHHHHHHHHERE", file=sys.stderr)
-                from torch import Tensor
-                def logits(self, tokens: Tensor, audio_features: Tensor, offset: int) -> Tensor:
-                    # if not self.kv_cache:
-                    #     self.kv_cache, self.hooks = self.model.install_kv_cache_hooks()
-        #            print(tokens.shape, "tokens shape", file=sys.stderr)
-        #            print(audio_features.shape, "audio_features shape", file=sys.stderr)
-                    return self.model.decoder(tokens, audio_features, kv_cache=self.kv_cache, offset=offset)
-
-            self.inference = MyPyTorchInference(self.model, self.initial_token_length)
+            self.inference = BeamPyTorchInference(self.model, self.initial_token_length)
             self.inference.kv_cache = self.kv_cache
 
-            class MyBeamSearchDecoder(BeamSearchDecoder):
-                def update(self, tokens, logits, sum_logprobs):
-                    #tokens = tokens.repeat(self.beam_size,1)
-                    # print(logits.shape, file=sys.stderr)
-                    # sum_logprobs = sum_logprobs.repeat(self.beam_size)
-                    # logits = logits.repeat(self.beam_size,1)
-                    return super().update(tokens, logits, sum_logprobs)
-
-            self.token_decoder = MyBeamSearchDecoder(inference=self.inference, eot=self.tokenizer.eot, beam_size=cfg.beam_size)
+            self.token_decoder = BeamSearchDecoder(inference=self.inference, eot=self.tokenizer.eot, beam_size=cfg.beam_size)
             logger.info(f"EOT token is: {self.tokenizer.eot}")
 
         # init state
@@ -245,7 +192,7 @@ class PaddedAlignAttWhisper:
 
 
     
-    def logits(self, tokens: torch.Tensor, audio_features: torch.Tensor, offset: int) -> torch.Tensor:
+    def logits(self, tokens: torch.Tensor, audio_features: torch.Tensor) -> torch.Tensor:
         if self.cfg.decoder_type == "greedy":
             logit = self.model.decoder(tokens, audio_features, kv_cache=self.kv_cache)
         else:
@@ -254,7 +201,7 @@ class PaddedAlignAttWhisper:
            #     toks = tokens.repeat_interleave(self.cfg.beam_size, dim=0).to(audio_features.device)
            # else:
             toks = tokens
-            logit = self.inference.logits(toks, audio_features, offset)
+            logit = self.inference.logits(toks, audio_features)
         return logit
     
 
@@ -440,7 +387,7 @@ class PaddedAlignAttWhisper:
                 # only need to use the last token except in the first forward pass
                 tokens_for_logits = current_tokens[:,-1:]
 
-            logits = self.logits(tokens_for_logits, encoder_feature, offset=current_tokens.shape[1]) # B, len(tokens), token dict size
+            logits = self.logits(tokens_for_logits, encoder_feature) #, offset=current_tokens.shape[1]) # B, len(tokens), token dict size
 #            print(self.kv_cache.keys(), file=sys.stderr)
 
             if new_segment and self.tokenizer.no_speech is not None:

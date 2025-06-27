@@ -255,33 +255,25 @@ class TextDecoder(nn.Module):
         mask = torch.empty(n_ctx, n_ctx).fill_(-np.inf).triu_(1)
         self.register_buffer("mask", mask, persistent=False)
 
-    def forward(self, x: Tensor, xa: Tensor, kv_cache: Optional[dict] = None, offset: Optional[int] = None):
+    def forward(self, x: Tensor, xa: Tensor, kv_cache: Optional[dict] = None):
         """
         x : torch.LongTensor, shape = (batch_size, <= n_ctx)
             the text tokens
         xa : torch.Tensor, shape = (batch_size, n_audio_ctx, n_audio_state)
             the encoded audio features to be attended on
         """
-        #print("TextDecoder forward",file=sys.stderr)
-        #print(x.shape, xa.shape, file=sys.stderr)
-        #print(kv_cache.keys(), file=sys.stderr)
-        o = next(iter(kv_cache.values())).shape[1] if kv_cache else 0
-        if offset is None:
-            offset = o
-        #print("offset cache_offset",offset, o, file=sys.stderr)
-        offset = o
+
+        offset = next(iter(kv_cache.values())).shape[1] if kv_cache else 0
         x = (
             self.token_embedding(x)
             + self.positional_embedding[offset : offset + x.shape[-1]]
         )
-        #print("x emb",x.shape,file=sys.stderr)
         # x = x.to(xa.dtype)
 
         i = 0
         for block in self.blocks:
-            #print(f"decoder layer {i}",file=sys.stderr)
+            # print(f"decoder layer {i}")
             x = block(x, xa, mask=self.mask, kv_cache=kv_cache)
-            #print(x.shape,file=sys.stderr)
             i += 1
 
         x = self.ln(x)
