@@ -30,9 +30,8 @@ import sys
 # - context
 class PaddedAlignAttWhisper:
     def __init__(self, cfg: AlignAttConfig) -> None:
-        self.debug_iterations = 0
         model_name = os.path.basename(cfg.model_path).replace(".pt", "")
-        model_path = os.path.dirname(cfg.model_path)
+        model_path = os.path.dirname(os.path.abspath(cfg.model_path))
         self.model = load_model(name=model_name, download_root=model_path)
 
         logger.info(f"Model dimensions: {self.model.dims}")
@@ -650,8 +649,4 @@ class PaddedAlignAttWhisper:
 
         logger.info(f"Output: {self.tokenizer.decode(ret)}")
         
-
-        # self.debug_iterations += 1
-        # if self.debug_iterations > 5:
-        #     sys.exit()
         return ret
