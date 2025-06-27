@@ -42,7 +42,7 @@ class PaddedAlignAttWhisper:
             task=cfg.task
         )
         self.tokenizer = tokenizer.get_tokenizer(
-            multilingual=True, 
+            multilingual=not model_name.endswith(".en"), 
             language=cfg.language, 
             num_languages=self.model.num_languages,
             task=decode_options.task
