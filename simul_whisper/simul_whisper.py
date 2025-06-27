@@ -12,6 +12,7 @@ from .whisper.audio import log_mel_spectrogram, TOKENS_PER_SECOND, pad_or_trim, 
 from .whisper.timing import median_filter
 from .whisper.decoding import SuppressBlank, GreedyDecoder, BeamSearchDecoder, SuppressTokens
 from .beam import BeamPyTorchInference
+from .eow_detection import fire_at_boundary, load_cif
 import os
 
 from token_buffer import TokenBuffer
@@ -53,22 +54,12 @@ class PaddedAlignAttWhisper:
         self.cfg = cfg
 
 
-        # model to detect end-of-word boundary at the end of the segment.
-        self.CIFLinear = torch.nn.Linear(self.model.dims.n_audio_state, 1)
-        if cfg.cif_ckpt_path is None or not cfg.cif_ckpt_path:
-            if cfg.never_fire:
-                self.never_fire = True
-                self.always_fire = False
-            else:
-                self.always_fire = True
-                self.never_fire = False
-        else:
-            self.always_fire = False
-            self.never_fire = cfg.never_fire
-            checkpoint = torch.load(cfg.if_ckpt_path)
-            self.CIFLinear.load_state_dict(checkpoint)
-        self.CIFLinear.to(self.model.device)
-        # install hooks
+        # model to detect end-of-word boundary at the end of the segment
+        self.CIFLinear, self.always_fire, self.never_fire = load_cif(cfg,
+                                                                     n_audio_state=self.model.dims.n_audio_state,
+                                                                     device=self.model.device)
+
+        # install hooks to access encoder-decoder attention
         self.dec_attns = []
         def layer_hook(module, net_input, net_output):
             # net_output[1]: B*num_head*token_len*audio_len
@@ -102,6 +93,8 @@ class PaddedAlignAttWhisper:
             self.align_source[layer_rank] = heads
             self.num_align_heads += 1
 
+
+        # init tokens (mandatory prompt)
         self.initial_tokens = torch.tensor(
             self.tokenizer.sot_sequence_including_notimestamps, 
             dtype=torch.long, 
@@ -132,7 +125,7 @@ class PaddedAlignAttWhisper:
         self.suppress_tokens = lambda logits: sup_tokens.apply(logits, None)
 
 
-        # decoder type
+        # decoder type: greedy or beam
         if cfg.decoder_type == "greedy":
             logger.info("Using greedy decoder")
             self.token_decoder = GreedyDecoder(0.0, self.tokenizer.eot)
@@ -190,18 +183,12 @@ class PaddedAlignAttWhisper:
         logger.info(f"Context after trim: {self.context.text} (len: {l})")
 
 
-
-    
     def logits(self, tokens: torch.Tensor, audio_features: torch.Tensor) -> torch.Tensor:
         if self.cfg.decoder_type == "greedy":
             logit = self.model.decoder(tokens, audio_features, kv_cache=self.kv_cache)
         else:
             logger.debug(f"Logits shape: {tokens.shape}")
-           # if tokens.shape[0] == 1:
-           #     toks = tokens.repeat_interleave(self.cfg.beam_size, dim=0).to(audio_features.device)
-           # else:
-            toks = tokens
-            logit = self.inference.logits(toks, audio_features)
+            logit = self.inference.logits(tokens, audio_features)
         return logit
     
 
@@ -213,59 +200,16 @@ class PaddedAlignAttWhisper:
         self.init_context()
         logger.debug(f"Context: {self.context}")
         if not complete and len(self.segments) > 2:
-            logger.debug("jsme tady")
             self.segments = self.segments[-2:]
         else:
-            logger.debug("nejsme tady")
             self.segments = []
 
 
-    # from https://github.com/dqqcasia/mosst/blob/master/fairseq/models/speech_to_text/convtransformer_wav2vec_cif.py
-    def resize(self, alphas, target_lengths, threshold=0.999):
-        """
-        alpha in thresh=1.0 | (0.0, +0.21)
-        target_lengths: if None, apply round and resize, else apply scaling
-        """
-        # sum
-        _num = alphas.sum(-1)
-        num = target_lengths.float()
-        # scaling
-        _alphas = alphas * (num / _num)[:, None].repeat(1, alphas.size(1))
-        # rm attention value that exceeds threashold
-        count = 0
-        while len(torch.where(_alphas > threshold)[0]):
-            count += 1
-            if count > 10:
-                break
-            logger.debug('Fixing alpha')
-            xs, ys = torch.where(_alphas > threshold)
-            for x, y in zip(xs, ys):
-                if _alphas[x][y] >= threshold:
-                    mask = _alphas[x].ne(0).float()
-                    mean = 0.5 * _alphas[x].sum() / mask.sum()
-                    _alphas[x] = _alphas[x] * 0.5 + mean * mask
-
-        return _alphas, _num   
-    
-    
     def fire_at_boundary(self, chunked_encoder_feature: torch.Tensor):
         if self.always_fire: return True
         if self.never_fire: return False
-        content_mel_len = chunked_encoder_feature.shape[1] # B, T, D
-        alphas = self.CIFLinear(chunked_encoder_feature).squeeze(dim=2) # B, T
-        alphas = torch.sigmoid(alphas)
-        decode_length = torch.round(alphas.sum(-1)).int()
-        alphas, _ = self.resize(alphas, decode_length)
-        alphas = alphas.squeeze(0) # (T, )
-        threshold = 0.999
-        integrate = torch.cumsum(alphas[:-1], dim=0) # ignore the peak value at the end of the content chunk
-        exceed_count = integrate[-1] // threshold
-        integrate = integrate - exceed_count*1.0 # minus 1 every time intergrate exceed the threshold
-        important_positions = (integrate >= 0).nonzero(as_tuple=True)[0]
-        if important_positions.numel() == 0:
-            return False
-        else:
-            return important_positions[0] >= content_mel_len-2
+        return fire_at_boundary(chunked_encoder_feature, self.CIFLinear)
+
 
     def segments_len(self):
         segments_len = sum(s.shape[0] for s in self.segments) / 16000

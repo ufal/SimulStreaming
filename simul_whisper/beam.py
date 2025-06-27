@@ -1,4 +1,6 @@
 from .whisper.decoding import PyTorchInference
+
+# extention of PyTorchInference for beam search
 class BeamPyTorchInference(PyTorchInference):
 
     def _kv_modules(self):
