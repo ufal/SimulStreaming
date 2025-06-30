@@ -127,10 +127,12 @@ class SimulWhisperASR(ASRBase):
                                                              task="translate")
 
 
-
 class SimulWhisperOnline(OnlineProcessorInterface):
+    chunks = 1
+
     def __init__(self, asr):
         self.model = asr.model
+        self.file = None
         self.init()
 
     def init(self, offset=None):
@@ -145,8 +147,14 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 
         self.audio_bufer_offset = self.offset
 
+        if self.file is not None:
+            self.file.close()
+        self.file = open(f"chunk-{self.chunks}-{self.offset}.wav", "wb")
+        self.chunks += 1
+
     def insert_audio_chunk(self, audio):
         self.audio_chunks.append(torch.from_numpy(audio))
+        self.file.write(audio)
 
     def timestamped_text(self, tokens, generation):
 
@@ -185,6 +193,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
                 self.end += audio.shape[0] / self.SAMPLING_RATE
         self.audio_chunks = []
         self.audio_bufer_offset += self.model.insert_audio(audio)
+        print("Audio buffer offset:", self.audio_bufer_offset, file=sys.stderr)
         tokens, generation_progress = self.model.infer(is_last=self.is_last)
 
         # word-level timestamps
@@ -194,13 +203,13 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 
         if len(text) == 0:
             return (None,None,"")
-        self.beg = max(self.beg, ts_words[0][0]+self.audio_bufer_offset)
+        self.beg = ts_words[0][0]+self.audio_bufer_offset
         if self.is_last:
             e = self.end
         else:
             e = ts_words[-1][1]+self.audio_bufer_offset
 
-        self.beg = e
+#        self.beg = e
         
         return (self.beg,e,text)
 
@@ -210,6 +219,8 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         #self.insert_audio_chunk(np.array([],dtype=np.float32))
         o = self.process_iter()
         self.is_last = False
+        self.model.refresh_segment(complete=True)
+        self.file.close()
         return o
     
 

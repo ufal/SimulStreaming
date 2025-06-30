@@ -306,7 +306,7 @@ class PaddedAlignAttWhisper:
         logger.info("Decoding loop starts\n")
 
         attn_of_alignment_heads = None
-        most_attended_frame = None
+        miost_attended_frame = None
 
         token_len_before_decoding = current_tokens.shape[1]
         
@@ -455,13 +455,13 @@ class PaddedAlignAttWhisper:
                     self.tokenizer.decode([current_tokens[i, -1].item()])
                 ))
 
-        for k,v in generation.items():
-            print(k,v,file=sys.stderr)
-        for x in generation_progress:
-            for y in x.items():
-                print("\t\t",*y,file=sys.stderr)
-            print("\t","----", file=sys.stderr)
-        print("\t", "end of generation_progress_loop", file=sys.stderr)
+#        for k,v in generation.items():
+#            print(k,v,file=sys.stderr)
+#        for x in generation_progress:
+#            for y in x.items():
+#                print("\t\t",*y,file=sys.stderr)
+#            print("\t","----", file=sys.stderr)
+#        print("\t", "end of generation_progress_loop", file=sys.stderr)
         #    sys.exit(1)
         ####################### End of decoding loop
 

@@ -54,8 +54,8 @@ class TokenBuffer:
 
         ids = tokenizer.encode(self.text[after:])
         words, wids = self.tokenizer.split_to_word_tokens(ids)
-        print(words, file=sys.stderr)
-        print(wids, file=sys.stderr)
+#        print(words, file=sys.stderr)
+#        print(wids, file=sys.stderr)
         if not words:
             return 0
         self.text = self.text[:after] + "".join(words[num:])
