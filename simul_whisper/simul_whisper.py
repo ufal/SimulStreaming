@@ -208,28 +208,7 @@ class PaddedAlignAttWhisper:
         return fire_at_boundary(chunked_encoder_feature, self.CIFLinear)
 
 
-    def segments_len(self):
-        segments_len = sum(s.shape[0] for s in self.segments) / 16000
-        return segments_len
 
-
-    def _apply_minseglen(self):
-        segments_len = self.segments_len()
-        # wait for long enough audio to start
-        if segments_len < self.cfg.audio_min_len: 
-            logger.debug("waiting for next segment")
-            return False
-        # len of audio is bigger than buffer_len. Going to remove the first segment
-        while segments_len > self.cfg.audio_max_len:
-            removed_len = self.segments[0].shape[0] / 16000
-            segments_len -= removed_len
-            self.last_attend_frame -= int(TOKENS_PER_SECOND*removed_len)
-            self.segments = self.segments[1:]
-            logger.debug(f"remove segments: {len(self.segments)} {len(self.tokens)}")
-        
-            self.context.append_token_ids(self.tokens[1][0,:])
-            self.tokens = [self.initial_tokens] + self.tokens[2:]
-        return True
 
     def _current_tokens(self):
 
@@ -256,18 +235,47 @@ class PaddedAlignAttWhisper:
         for i in range(self.cfg.beam_size):
             logger.debug(self.tokenizer.decode_with_timestamps(tokens[i].tolist()))
 
-    @torch.no_grad()
-    def infer(self, segment=None, is_last=False):
-        new_segment = True
+    ### audio buffer 
+
+    def segments_len(self):
+        segments_len = sum(s.shape[0] for s in self.segments) / 16000
+        return segments_len
+
+    def _apply_minseglen(self):
+        segments_len = self.segments_len()
+        # wait for long enough audio to start
+        if segments_len < self.cfg.audio_min_len: 
+            logger.debug("waiting for next segment")
+            return False
+        return True
+
+    def insert_audio(self, segment=None):
         if segment is not None:
             self.segments.append(segment)
-        elif len(self.segments) == 0:
-            return self.initial_tokens.new_tensor([])
-        else:
-            segment = self.segments[-1]
-        if not self._apply_minseglen():
-            return self.initial_tokens.new_tensor([])
 
+        removed_len = 0
+        # len of audio is bigger than buffer_len. Going to remove the first segment
+        segments_len = self.segments_len()
+        while segments_len > self.cfg.audio_max_len:
+            removed_len = self.segments[0].shape[0] / 16000
+            segments_len -= removed_len
+            self.last_attend_frame -= int(TOKENS_PER_SECOND*removed_len)
+            self.segments = self.segments[1:]
+            logger.debug(f"remove segments: {len(self.segments)} {len(self.tokens)}")
+            self.context.append_token_ids(self.tokens[1][0,:])
+            self.tokens = [self.initial_tokens] + self.tokens[2:]
+        return removed_len
+
+
+    ### transcription / translation
+
+    @torch.no_grad()
+    def infer(self, is_last=False):
+        new_segment = True
+        if len(self.segments) == 0:
+            return []
+        if not self._apply_minseglen():
+            return []
 
         # input_segments is concatenation of audio, it's one array
         if len(self.segments) > 1:
@@ -482,6 +490,7 @@ class PaddedAlignAttWhisper:
         else:
             # going to truncate the tokens after the last space
             split_words, split_tokens = self.tokenizer.split_to_word_tokens(tokens_to_split.tolist())
+            generation["result"] = {"split_words": split_words, "split_tokens": split_tokens}
 
 #            text_to_split = self.tokenizer.decode(tokens_to_split)
 #            logger.debug(f"text_to_split: {text_to_split}")
@@ -496,7 +505,6 @@ class PaddedAlignAttWhisper:
 
         ### new hypothesis
         logger.debug(f"new_hypothesis: {new_hypothesis}")
-        ret = new_hypothesis
         new_tokens = torch.tensor([new_hypothesis], dtype=torch.long).repeat_interleave(self.cfg.beam_size, dim=0).to(
             device=self.model.device,
         )
@@ -504,12 +512,13 @@ class PaddedAlignAttWhisper:
         # TODO: test if this is redundant or not
 #        ret = ret[ret<DEC_PAD]
 
-        logger.info(f"Output: {self.tokenizer.decode(ret)}")
+        logger.info(f"Output: {self.tokenizer.decode(new_hypothesis)}")
         
+        # cleaning cache
         self.dec_attns = []
         self.kv_cache = {}
         if self.decoder_type == "beam":
             self.inference.kv_cache = self.kv_cache
             self.token_decoder.reset()
 
-        return ret, generation
+        return new_hypothesis, generation
