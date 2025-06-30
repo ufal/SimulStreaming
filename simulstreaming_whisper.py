@@ -128,7 +128,6 @@ class SimulWhisperASR(ASRBase):
 
 
 class SimulWhisperOnline(OnlineProcessorInterface):
-    chunks = 1
 
     def __init__(self, asr):
         self.model = asr.model
@@ -147,14 +146,8 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 
         self.audio_bufer_offset = self.offset
 
-        if self.file is not None:
-            self.file.close()
-        self.file = open(f"chunk-{self.chunks}-{self.offset}.wav", "wb")
-        self.chunks += 1
-
     def insert_audio_chunk(self, audio):
         self.audio_chunks.append(torch.from_numpy(audio))
-        self.file.write(audio)
 
     def timestamped_text(self, tokens, generation):
 
@@ -220,7 +213,6 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         o = self.process_iter()
         self.is_last = False
         self.model.refresh_segment(complete=True)
-        self.file.close()
         return o
     
 
