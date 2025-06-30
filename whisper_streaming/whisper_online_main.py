@@ -71,6 +71,9 @@ def asr_factory(args, factory=None):
         online = VACOnlineASRProcessor(args.min_chunk_size, online)
 
     if args.task == "translate":
+        if args.model_path.endswith(".en.pt"):
+            logger.error(f"The model {args.model_path} is English only. Translation is not available. Terminating.")
+            sys.exit(1)
         asr.set_translate_task()
 
     return asr, online
