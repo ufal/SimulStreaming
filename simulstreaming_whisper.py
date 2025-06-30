@@ -157,10 +157,10 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 #        print((len(self.model.segments)+1) * self.model.cfg.segment_length, self.model.cfg.buffer_len)
 
 #        n = self.model.infer(audio,"",force_decode="",is_last=self.is_last)
-        n = self.model.infer(audio,is_last=self.is_last)
+        n, _ = self.model.infer(audio,is_last=self.is_last)
 
         #print("tady",n,file=sys.stderr)
-        n = n[n<DEC_PAD]
+        #n = n[n<DEC_PAD]
         #print("OUTPUT <DEC_PAD",n,file=sys.stderr)
 #        result = n
         result = self.model.tokenizer.decode(n)

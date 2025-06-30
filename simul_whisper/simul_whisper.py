@@ -362,17 +362,17 @@ class PaddedAlignAttWhisper:
             self.debug_print_tokens(current_tokens)
 
 
-            if self.decoder_type == "beam":
-                logger.debug(f"Finished sequences: {self.token_decoder.finished_sequences}")
+            # if self.decoder_type == "beam":
+            #     logger.debug(f"Finished sequences: {self.token_decoder.finished_sequences}")
 
-                logprobs = F.log_softmax(logits.float(), dim=-1)
-                idx = 0
-                logger.debug(f"Beam search topk: {logprobs[idx].topk(self.cfg.beam_size + 1)}")
-                logger.debug(f"Greedy search argmax: {logits.argmax(dim=-1)}")
-            if completed:
-                self.debug_print_tokens(current_tokens)
+            #     logprobs = F.log_softmax(logits.float(), dim=-1)
+            #     idx = 0
+            #     logger.debug(f"Beam search topk: {logprobs[idx].topk(self.cfg.beam_size + 1)}")
+            #     logger.debug(f"Greedy search argmax: {logits.argmax(dim=-1)}")
+            # if completed:
+            #     self.debug_print_tokens(current_tokens)
 
-                logger.debug("decode stopped because decoder completed")
+            #     logger.debug("decode stopped because decoder completed")
 
             attn_of_alignment_heads = [[] for _ in range(self.num_align_heads)]
             for i, attn_mat in enumerate(self.dec_attns):
@@ -459,56 +459,52 @@ class PaddedAlignAttWhisper:
 
         logger.info("End of decoding loop")
 
-        if attn_of_alignment_heads is not None:
-            seg_len = int(segment.shape[0] / 16000 * TOKENS_PER_SECOND)
+        # if attn_of_alignment_heads is not None:
+        #     seg_len = int(segment.shape[0] / 16000 * TOKENS_PER_SECOND)
 
-            # we consider that the beam hypothesis are ordered from the best to the worst. 
-            # the best has index 0
-            logger.debug(f"sum_logprobs: {sum_logprobs}")
+        #     # Lets' now consider only the top hypothesis in the beam search
+        #     top_beam_attn_of_alignment_heads = attn_of_alignment_heads[0]
 
-            # Lets' now consider only the top hypothesis in the beam search
-            top_beam_attn_of_alignment_heads = attn_of_alignment_heads[0]
-
-            # debug print: how is the new token attended?
-            new_token_attn = top_beam_attn_of_alignment_heads[token_len_before_decoding:, -seg_len:]
-            logger.debug(f"New token attention shape: {new_token_attn.shape}")
-            if new_token_attn.shape[0] == 0:  # it's not attended in the current audio segment
-                logger.debug("no token generated")
-            else:  # it is, and the max attention is:
-                new_token_max_attn, _ = new_token_attn.max(dim=-1)
-                logger.debug(f"segment max attention: {new_token_max_attn.mean().item()/len(self.segments)}")
+        #     # debug print: how is the new token attended?
+        #     new_token_attn = top_beam_attn_of_alignment_heads[token_len_before_decoding:, -seg_len:]
+        #     logger.debug(f"New token attention shape: {new_token_attn.shape}")
+        #     if new_token_attn.shape[0] == 0:  # it's not attended in the current audio segment
+        #         logger.debug("no token generated")
+        #     else:  # it is, and the max attention is:
+        #         new_token_max_attn, _ = new_token_attn.max(dim=-1)
+        #         logger.debug(f"segment max attention: {new_token_max_attn.mean().item()/len(self.segments)}")
 
 
         # let's now operate only with the top beam hypothesis
         tokens_to_split = current_tokens[0, token_len_before_decoding:]
         if fire_detected or is_last:
-            new_hypothesis = tokens_to_split
+            new_hypothesis = tokens_to_split.flatten().tolist()
         else:
-            logger.debug(f"tokens_to_split: {tokens_to_split}")
-            logger.debug(f"tokens_to_split shape: {tokens_to_split.shape}")
-            tokens_to_split = tokens_to_split
-            logger.debug(f"tokens_to_split shape: {tokens_to_split.shape}")
-            text_to_split = self.tokenizer.decode(tokens_to_split)
-            logger.debug(f"text_to_split: {text_to_split}")
-            logger.debug("text at current step: {}".format(text_to_split.replace(" ", "<space>")))
-            text_before_space = " ".join(text_to_split.split(" ")[:-1])
-            logger.debug("before the last space: {}".format(text_before_space.replace(" ", "<space>")))
-            if len(text_before_space) > 0:
-                new_hypothesis = current_tokens.new(self.tokenizer.encode(text_before_space, 
-                                                                          allowed_special="all"))
+            # going to truncate the tokens after the last space
+            split_words, split_tokens = self.tokenizer.split_to_word_tokens(tokens_to_split.tolist())
+
+#            text_to_split = self.tokenizer.decode(tokens_to_split)
+#            logger.debug(f"text_to_split: {text_to_split}")
+#            logger.debug("text at current step: {}".format(text_to_split.replace(" ", "<space>")))
+#            text_before_space = " ".join(text_to_split.split(" ")[:-1])
+#            logger.debug("before the last space: {}".format(text_before_space.replace(" ", "<space>")))
+            if len(split_words) > 1:
+                new_hypothesis = [i for sublist in split_tokens[:-1] for i in sublist]  
             else:
-                new_hypothesis = current_tokens.new_tensor([])
+                new_hypothesis = []
 
 
-### add hypothesis
+        ### new hypothesis
         logger.debug(f"new_hypothesis: {new_hypothesis}")
-        ret = new_hypothesis.squeeze(0)
-        ap = new_hypothesis.unsqueeze(0).repeat_interleave(self.cfg.beam_size, dim=0)
-        self.tokens.append(ap.clone())
-        logger.debug(f"ret: {ret}")
-        ret = ret[ret<DEC_PAD]
-        logger.debug(f"ret: {ret}")
-        logger.debug(f"ap: {ap}")
+        ret = new_hypothesis
+        new_tokens = torch.tensor([new_hypothesis], dtype=torch.long).repeat_interleave(self.cfg.beam_size, dim=0).to(
+            device=self.model.device,
+        )
+        self.tokens.append(new_tokens)
+        # TODO: test if this is redundant or not
+#        ret = ret[ret<DEC_PAD]
+
+        logger.info(f"Output: {self.tokenizer.decode(ret)}")
         
         self.dec_attns = []
         self.kv_cache = {}
@@ -516,7 +512,4 @@ class PaddedAlignAttWhisper:
             self.inference.kv_cache = self.kv_cache
             self.token_decoder.reset()
 
-
-        logger.info(f"Output: {self.tokenizer.decode(ret)}")
-        
-        return ret
+        return ret, generation
