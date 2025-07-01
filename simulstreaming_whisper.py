@@ -52,6 +52,7 @@ def simulwhisper_args(parser):
 
 
 def simul_asr_factory(args):
+    logger.setLevel(args.log_level)
     decoder = args.decoder
     if args.beams > 1:
         if decoder == "greedy":
@@ -113,7 +114,8 @@ class SimulWhisperASR(ASRBase):
         return x
 
     def warmup(self, audio, init_prompt=""):
-        self.model.infer(audio, True)
+        self.model.insert_audio(audio)
+        self.model.infer(True)
         self.model.refresh_segment(complete=True)
     
     def use_vad(self):
@@ -126,8 +128,10 @@ class SimulWhisperASR(ASRBase):
 
 
 class SimulWhisperOnline(OnlineProcessorInterface):
+
     def __init__(self, asr):
         self.model = asr.model
+        self.file = None
         self.init()
 
     def init(self, offset=None):
@@ -140,8 +144,37 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         self.beg = self.offset
         self.end = self.offset
 
+        self.audio_bufer_offset = self.offset
+        self.last_ts = (-1,-1)
+
     def insert_audio_chunk(self, audio):
         self.audio_chunks.append(torch.from_numpy(audio))
+
+    def timestamped_text(self, tokens, generation):
+
+        pr = generation["progress"]
+        if "result" not in generation:
+            split_words, split_tokens = self.model.tokenizer.split_to_word_tokens(tokens)
+        else:
+            split_words, split_tokens = generation["result"]["split_words"], generation["result"]["split_tokens"]
+
+        frames = [p["most_attended_frames"][0] for p in pr]
+        tokens = tokens.copy()
+        ret = []
+        for sw,st in zip(split_words,split_tokens):
+            b = None
+            for stt in st:
+                t,f = tokens.pop(0), frames.pop(0)
+                if t != stt:
+                    raise ValueError(f"Token mismatch: {t} != {stt} at frame {f}.")
+                if b is None:
+                    b = f
+            e = f
+            out = (b*0.02, e*0.02, sw)
+            ret.append(out)
+            logger.debug(f"TS-WORD:\t{' '.join(map(str, out))}")
+        return ret
+
 
     def process_iter(self):
         if len(self.audio_chunks) == 0:
@@ -151,30 +184,30 @@ class SimulWhisperOnline(OnlineProcessorInterface):
             if audio.shape[0] == 0:
                 audio = None
             else:
-                self.end += audio.shape[0] / self.SAMPLING_RATE #self.model.cfg.segment_length
+                self.end += audio.shape[0] / self.SAMPLING_RATE
         self.audio_chunks = []
-        #print("audio shape",audio.shape,flush=True,file=sys.stderr)
-#        print((len(self.model.segments)+1) * self.model.cfg.segment_length, self.model.cfg.buffer_len)
+        self.audio_bufer_offset += self.model.insert_audio(audio)
+        tokens, generation_progress = self.model.infer(is_last=self.is_last)
 
-#        n = self.model.infer(audio,"",force_decode="",is_last=self.is_last)
-        n = self.model.infer(audio,is_last=self.is_last)
+        # word-level timestamps
+        ts_words = self.timestamped_text(tokens, generation_progress)
 
-        #print("tady",n,file=sys.stderr)
-        n = n[n<DEC_PAD]
-        #print("OUTPUT <DEC_PAD",n,file=sys.stderr)
-#        result = n
-        result = self.model.tokenizer.decode(n)
-        #print("RESULT",result,file=sys.stderr)
-        if len(result) == 0:
+        text = self.model.tokenizer.decode(tokens)
+
+        if len(text) == 0:
             return (None,None,"")
-        b = self.beg
-        e = self.end
-        self.beg = self.end
+        self.beg = ts_words[0][0]+self.audio_bufer_offset  # it should be this
+        self.beg = max(self.beg, self.last_ts[0]+1)  # but let's create the timestamps non-decreasing -- at least last beg + 1 
+        if self.is_last:
+            e = self.end
+        else:
+            e = ts_words[-1][1]+self.audio_bufer_offset
+        e = max(e, self.last_ts[1]+1)
+
+        self.last_ts = (self.beg, e)
+#        self.beg = e
         
-        logger.debug(f"Result: {result}")
-        logger.debug(f"Last attend frame: {self.model.last_attend_frame}")
-        logger.debug(f"Max text length: {self.model.max_text_len}")
-        return (b,e,result)
+        return (self.beg,e,text)
 
     def finish(self):
         logger.info("Finish")
@@ -182,6 +215,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         #self.insert_audio_chunk(np.array([],dtype=np.float32))
         o = self.process_iter()
         self.is_last = False
+        self.model.refresh_segment(complete=True)
         return o
     
 

@@ -4,6 +4,7 @@ import numpy as np
 
 import logging
 logger = logging.getLogger(__name__)
+import sys
 
 class VACOnlineASRProcessor(OnlineProcessorInterface):
     '''Wraps OnlineASRProcessor with VAC (Voice Activity Controller). 
@@ -40,20 +41,19 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
         self.buffer_offset = 0  # in frames
 
     def clear_buffer(self):
-        self.buffer_offset += len(self.audio_buffer)
+        #self.buffer_offset += len(self.audio_buffer)
         self.audio_buffer = np.array([],dtype=np.float32)
 
 
     def insert_audio_chunk(self, audio):
         res = self.vac(audio)
         self.audio_buffer = np.append(self.audio_buffer, audio)
-
         if res is not None:
-            frame = list(res.values())[0]-self.buffer_offset
+            frame = list(res.values())[0]
             if 'start' in res and 'end' not in res:
                 self.status = 'voice'
                 send_audio = self.audio_buffer[frame:]
-                self.online.init(offset=(frame+self.buffer_offset)/self.SAMPLING_RATE)
+                self.online.init(offset=frame/self.SAMPLING_RATE)
                 self.online.insert_audio_chunk(send_audio)
                 self.current_online_chunk_buffer_size += len(send_audio)
                 self.clear_buffer()
@@ -69,10 +69,11 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
                 end = res["end"]-self.buffer_offset
                 self.status = 'nonvoice'
                 send_audio = self.audio_buffer[beg:end]
-                self.online.init(offset=(beg+self.buffer_offset)/self.SAMPLING_RATE)
+                self.online.init(offset=(res["start"]/self.SAMPLING_RATE))
                 self.online.insert_audio_chunk(send_audio)
                 self.current_online_chunk_buffer_size += len(send_audio)
                 self.is_currently_final = True
+                #self.buffer_offset += len(self.audio_buffer)-res["start"] + len(self.audio_buffer)-res["end"]
                 self.clear_buffer()
         else:
             if self.status == 'voice':
