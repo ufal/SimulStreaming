@@ -490,7 +490,8 @@ class PaddedAlignAttWhisper:
         else:
             # going to truncate the tokens after the last space
             split_words, split_tokens = self.tokenizer.split_to_word_tokens(tokens_to_split.tolist())
-            generation["result"] = {"split_words": split_words, "split_tokens": split_tokens}
+            generation["result"] = {"split_words": split_words[:-1], "split_tokens": split_tokens[:-1]}
+            generation["result_truncated"] = {"split_words": split_words[-1:], "split_tokens": split_tokens[-1:]}
 
 #            text_to_split = self.tokenizer.decode(tokens_to_split)
 #            logger.debug(f"text_to_split: {text_to_split}")
