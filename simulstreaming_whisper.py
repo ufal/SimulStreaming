@@ -146,6 +146,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 
         self.audio_bufer_offset = self.offset
         self.last_ts = (-1,-1)
+        self.model.refresh_segment(complete=True)
 
     def insert_audio_chunk(self, audio):
         self.audio_chunks.append(torch.from_numpy(audio))
