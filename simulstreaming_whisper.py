@@ -187,7 +187,6 @@ class SimulWhisperOnline(OnlineProcessorInterface):
                 self.end += audio.shape[0] / self.SAMPLING_RATE
         self.audio_chunks = []
         self.audio_bufer_offset += self.model.insert_audio(audio)
-        print("Audio buffer offset:", self.audio_bufer_offset, file=sys.stderr)
         tokens, generation_progress = self.model.infer(is_last=self.is_last)
 
         # word-level timestamps

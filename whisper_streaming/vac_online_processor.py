@@ -50,8 +50,6 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
         self.audio_buffer = np.append(self.audio_buffer, audio)
         if res is not None:
             frame = list(res.values())[0]
-            print(res,file=sys.stderr)
-            print("FRAME", frame, "FRAMW/16000",frame/16000, "buffer_offset", self.buffer_offset, file=sys.stderr)
             if 'start' in res and 'end' not in res:
                 self.status = 'voice'
                 send_audio = self.audio_buffer[frame:]
@@ -83,7 +81,6 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
                 self.current_online_chunk_buffer_size += len(self.audio_buffer)
                 self.clear_buffer()
             else:
-                print("nonvoice", len(self.audio_buffer), self.buffer_offset, file=sys.stderr)
                 # We keep 1 second because VAD may later find start of voice in it.
                 # But we trim it to prevent OOM. 
                 self.buffer_offset += max(0,len(self.audio_buffer)-self.SAMPLING_RATE)
