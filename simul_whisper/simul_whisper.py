@@ -273,9 +273,9 @@ class PaddedAlignAttWhisper:
     def infer(self, is_last=False):
         new_segment = True
         if len(self.segments) == 0:
-            return []
+            return [], {}
         if not self._apply_minseglen():
-            return []
+            return [], {}
 
         # input_segments is concatenation of audio, it's one array
         if len(self.segments) > 1:
