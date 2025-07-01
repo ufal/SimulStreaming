@@ -145,6 +145,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         self.end = self.offset
 
         self.audio_bufer_offset = self.offset
+        self.last_ts = (-1,-1)
 
     def insert_audio_chunk(self, audio):
         self.audio_chunks.append(torch.from_numpy(audio))
@@ -196,12 +197,15 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 
         if len(text) == 0:
             return (None,None,"")
-        self.beg = ts_words[0][0]+self.audio_bufer_offset
+        self.beg = ts_words[0][0]+self.audio_bufer_offset  # it should be this
+        self.beg = max(self.beg, self.last_ts[0]+1)  # but let's create the timestamps non-decreasing -- at least last beg + 1 
         if self.is_last:
             e = self.end
         else:
             e = ts_words[-1][1]+self.audio_bufer_offset
+        e = max(e, self.last_ts[1]+1)
 
+        self.last_ts = (self.beg, e)
 #        self.beg = e
         
         return (self.beg,e,text)
