@@ -306,7 +306,7 @@ class PaddedAlignAttWhisper:
         logger.info("Decoding loop starts\n")
 
         attn_of_alignment_heads = None
-        miost_attended_frame = None
+        most_attended_frame = None
 
         token_len_before_decoding = current_tokens.shape[1]
         
