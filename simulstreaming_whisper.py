@@ -152,6 +152,8 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         self.audio_chunks.append(torch.from_numpy(audio))
 
     def timestamped_text(self, tokens, generation):
+        if not generation:
+            return []
 
         pr = generation["progress"]
         if "result" not in generation:
