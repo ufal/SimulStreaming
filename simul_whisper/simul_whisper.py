@@ -39,21 +39,18 @@ class PaddedAlignAttWhisper:
 
         logger.info(f"Model dimensions: {self.model.dims}")
 
-        decode_options = DecodingOptions(
+        self.decode_options = DecodingOptions(
             language = cfg.language, 
             without_timestamps = True,
             task=cfg.task
         )
-        self.tokenizer = tokenizer.get_tokenizer(
-            multilingual=not model_name.endswith(".en"), 
-            language=cfg.language, 
-            num_languages=self.model.num_languages,
-            task=decode_options.task
-        )
+        self.tokenizer_is_multilingual = not model_name.endswith(".en")
+        self.create_tokenizer(cfg.language if cfg.language != "auto" else None)
+        self.detected_language = cfg.language if cfg.language != "auto" else None
+        
         self.max_text_len = self.model.dims.n_text_ctx
         self.num_decoder_layers = len(self.model.decoder.blocks)
         self.cfg = cfg
-
 
         # model to detect end-of-word boundary at the end of the segment
         self.CIFLinear, self.always_fire, self.never_fire = load_cif(cfg,
@@ -95,14 +92,6 @@ class PaddedAlignAttWhisper:
             self.num_align_heads += 1
 
 
-        # init tokens (mandatory prompt)
-        self.initial_tokens = torch.tensor(
-            self.tokenizer.sot_sequence_including_notimestamps, 
-            dtype=torch.long, 
-            device=self.model.device).unsqueeze(0)
-        self.initial_token_length = self.initial_tokens.shape[1]
-        self.sot_index = self.tokenizer.sot_sequence.index(self.tokenizer.sot)
-
         # tokens to be suppressed from decoding, to prevent hallucinations
         suppress_tokens = [
                 self.tokenizer.transcribe,
@@ -121,6 +110,16 @@ class PaddedAlignAttWhisper:
         self.suppress_tokens = lambda logits: sup_tokens.apply(logits, None)
         # blank tokens are suppresed for new segments near the line 334
 
+        # it's going to be regenerated after lang id
+        self.init_tokens()
+        
+        self.last_attend_frame = -self.cfg.rewind_threshold
+
+        if self.cfg.max_context_tokens is None:
+            self.max_context_tokens = self.max_text_len
+        else:
+            self.max_context_tokens = self.cfg.max_context_tokens
+        self.init_context()
 
         # decoder type: greedy or beam
         if cfg.decoder_type == "greedy":
@@ -135,16 +134,13 @@ class PaddedAlignAttWhisper:
 
             self.token_decoder = BeamSearchDecoder(inference=self.inference, eot=self.tokenizer.eot, beam_size=cfg.beam_size)
 
-        # init state
-        self.segments = []
-        self.tokens = [self.initial_tokens]
-        self.last_attend_frame = -self.cfg.rewind_threshold
-
-        if self.cfg.max_context_tokens is None:
-            self.max_context_tokens = self.max_text_len
-        else:
-            self.max_context_tokens = self.cfg.max_context_tokens
-        self.init_context()
+    def create_tokenizer(self, language=None):
+        self.tokenizer = tokenizer.get_tokenizer(
+            multilingual=self.tokenizer_is_multilingual,  
+            language=language,
+            num_languages=self.model.num_languages,
+            task=self.decode_options.task
+        )
 
     def init_context(self):
         kw = {'tokenizer': self.tokenizer, 
@@ -155,6 +151,17 @@ class PaddedAlignAttWhisper:
             self.context = TokenBuffer.from_text(self.cfg.static_init_prompt, **kw)
         if self.cfg.init_prompt is not None:
             self.context.text += self.cfg.init_prompt
+
+    def init_tokens(self):
+        # init tokens (mandatory prompt)
+        self.initial_tokens = torch.tensor(
+            self.tokenizer.sot_sequence_including_notimestamps, 
+            dtype=torch.long, 
+            device=self.model.device).unsqueeze(0)
+        self.initial_token_length = self.initial_tokens.shape[1]
+        self.sot_index = self.tokenizer.sot_sequence.index(self.tokenizer.sot)
+        self.segments = []
+        self.tokens = [self.initial_tokens]
 
     def trim_context(self):
         logger.info("Trimming context")
@@ -192,8 +199,9 @@ class PaddedAlignAttWhisper:
     def refresh_segment(self, complete=False):
 
         logger.debug("Refreshing segment")
-        self.tokens = [self.initial_tokens] 
+        self.init_tokens()
         self.last_attend_frame = -self.cfg.rewind_threshold       
+        self.detected_language = None
         self.init_context()
         logger.debug(f"Context: {self.context}")
         if not complete and len(self.segments) > 2:
@@ -206,8 +214,6 @@ class PaddedAlignAttWhisper:
         if self.always_fire: return True
         if self.never_fire: return False
         return fire_at_boundary(chunked_encoder_feature, self.CIFLinear)
-
-
 
 
     def _current_tokens(self):
@@ -325,8 +331,7 @@ class PaddedAlignAttWhisper:
         else:
             input_segments = self.segments[0]
 
-        self.trim_context()
-        current_tokens = self._current_tokens()
+
         
         # mel + padding to 30s
         mel_padded = log_mel_spectrogram(input_segments, n_mels=self.model.dims.n_mels, padding=N_SAMPLES, 
@@ -343,9 +348,20 @@ class PaddedAlignAttWhisper:
 #        logger.debug(f"Encoder feature shape: {encoder_feature.shape}")
 #        if mel.shape[-2:] != (self.model.dims.n_audio_ctx, self.model.dims.n_audio_state):
 #            logger.debug("mel ")
-        language_tokens, language_probs = self.lang_detect(encoder_feature) 
-        #detect_language(self.model, mel, self.tokenizer)
-        logger.debug(f"Language tokens: {language_tokens}, probs: {language_probs}")
+        if self.cfg.language == "auto" and self.detected_language is None:
+            language_tokens, language_probs = self.lang_id(encoder_feature) 
+            logger.debug(f"Language tokens: {language_tokens}, probs: {language_probs}")
+            top_lan, p = max(language_probs[0].items(), key=lambda x: x[1])
+            logger.info(f"Detected language: {top_lan} with p={p:.4f}")
+            #self.tokenizer.language = top_lan
+            #self.tokenizer.__post_init__()
+            self.create_tokenizer(top_lan)
+            self.detected_language = top_lan
+            self.init_tokens()
+            logger.info(f"Tokenizer language: {self.tokenizer.language}, {self.tokenizer.sot_sequence_including_notimestamps}")
+
+        self.trim_context()
+        current_tokens = self._current_tokens()
 #        
         fire_detected = self.fire_at_boundary(encoder_feature[:, :content_mel_len, :])
 
