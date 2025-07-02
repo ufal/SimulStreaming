@@ -10,7 +10,7 @@ from .whisper import load_model, DecodingOptions, tokenizer
 from .config import AlignAttConfig
 from .whisper.audio import log_mel_spectrogram, TOKENS_PER_SECOND, pad_or_trim, N_SAMPLES, N_FRAMES
 from .whisper.timing import median_filter
-from .whisper.decoding import SuppressBlank, GreedyDecoder, BeamSearchDecoder, SuppressTokens
+from .whisper.decoding import GreedyDecoder, BeamSearchDecoder, SuppressTokens, detect_language
 from .beam import BeamPyTorchInference
 from .eow_detection import fire_at_boundary, load_cif
 import os
@@ -266,6 +266,48 @@ class PaddedAlignAttWhisper:
             self.tokens = [self.initial_tokens] + self.tokens[2:]
         return removed_len
 
+    def _clean_cache(self):
+        '''clean the cache that stores the attention matrices and kv_cache.
+        It must be called every time after generation with the model.'''
+        # cleaning cache
+        self.dec_attns = []
+        self.kv_cache = {}
+        if self.decoder_type == "beam":
+            self.inference.kv_cache = self.kv_cache
+            self.token_decoder.reset()
+
+    @torch.no_grad()
+    def lang_id(self, encoder_features):
+        """Language detection from encoder features.
+        This code is trimmed and copy-pasted from whisper.decoding.detect_language .
+        """
+    
+        # forward pass using a single token, startoftranscript
+        n_audio = encoder_features.shape[0]
+        x = torch.tensor([[self.tokenizer.sot]] * n_audio).to(self.model.device)  # [n_audio, 1]
+        logits = self.model.logits(x, encoder_features)[:, 0]
+
+        # collect detected languages; suppress all non-language tokens
+        mask = torch.ones(logits.shape[-1], dtype=torch.bool)
+        mask[list(self.tokenizer.all_language_tokens)] = False
+        logits[:, mask] = -np.inf
+        language_tokens = logits.argmax(dim=-1)
+        language_token_probs = logits.softmax(dim=-1).cpu()
+        language_probs = [
+            {
+                c: language_token_probs[i, j].item()
+                for j, c in zip(self.tokenizer.all_language_tokens, self.tokenizer.all_language_codes)
+            }
+            for i in range(n_audio)
+        ]
+
+        single = encoder_features.ndim == 2
+        if single:
+            language_tokens = language_tokens[0]
+            language_probs = language_probs[0]
+
+        self._clean_cache()
+        return language_tokens, language_probs
 
     ### transcription / translation
 
@@ -295,15 +337,24 @@ class PaddedAlignAttWhisper:
         # the len of actual audio
         content_mel_len = int((mel_padded.shape[2] - mel.shape[2])/2)
 
+        # encode
         encoder_feature = self.model.encoder(mel)
-        sum_logprobs = torch.zeros(self.cfg.beam_size, device=mel.device)
-        completed = False
 
+#        logger.debug(f"Encoder feature shape: {encoder_feature.shape}")
+#        if mel.shape[-2:] != (self.model.dims.n_audio_ctx, self.model.dims.n_audio_state):
+#            logger.debug("mel ")
+        language_tokens, language_probs = self.lang_detect(encoder_feature) 
+        #detect_language(self.model, mel, self.tokenizer)
+        logger.debug(f"Language tokens: {language_tokens}, probs: {language_probs}")
+#        
         fire_detected = self.fire_at_boundary(encoder_feature[:, :content_mel_len, :])
 
 
         ####################### Decoding loop
         logger.info("Decoding loop starts\n")
+
+        sum_logprobs = torch.zeros(self.cfg.beam_size, device=mel.device)
+        completed = False
 
         attn_of_alignment_heads = None
         most_attended_frame = None
@@ -515,11 +566,5 @@ class PaddedAlignAttWhisper:
 
         logger.info(f"Output: {self.tokenizer.decode(new_hypothesis)}")
         
-        # cleaning cache
-        self.dec_attns = []
-        self.kv_cache = {}
-        if self.decoder_type == "beam":
-            self.inference.kv_cache = self.kv_cache
-            self.token_decoder.reset()
-
+        self._clean_cache()
         return new_hypothesis, generation
