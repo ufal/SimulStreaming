@@ -122,9 +122,8 @@ class SimulWhisperASR(ASRBase):
         print("VAD not implemented",file=sys.stderr)
 
     def set_translate_task(self):
-        self.model.tokenizer = tokenizer.get_tokenizer(multilingual=True, language=self.model.cfg.language, 
-                                                             num_languages=self.model.model.num_languages,
-                                                             task="translate")
+        # this is not used. Translate task is set another way.
+        pass
 
 
 class SimulWhisperOnline(OnlineProcessorInterface):

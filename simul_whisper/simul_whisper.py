@@ -262,7 +262,7 @@ class PaddedAlignAttWhisper:
         removed_len = 0
         # len of audio is bigger than buffer_len. Going to remove the first segment
         segments_len = self.segments_len()
-        while segments_len > self.cfg.audio_max_len:
+        while len(self.segments) > 1 and segments_len > self.cfg.audio_max_len:
             removed_len = self.segments[0].shape[0] / 16000
             segments_len -= removed_len
             self.last_attend_frame -= int(TOKENS_PER_SECOND*removed_len)
