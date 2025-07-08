@@ -6,11 +6,9 @@ import logging
 import torch
 
 from simul_whisper.config import AlignAttConfig
-from simul_whisper.simul_whisper import PaddedAlignAttWhisper, DEC_PAD
-from simul_whisper.whisper import tokenizer
+from simul_whisper.simul_whisper import PaddedAlignAttWhisper
 
 logger = logging.getLogger(__name__)
-
 
 def simulwhisper_args(parser):
     group = parser.add_argument_group('Whisper arguments')
@@ -109,9 +107,9 @@ class SimulWhisperASR(ASRBase):
         self.model = PaddedAlignAttWhisper(cfg)
 
     def transcribe(self, audio, init_prompt=""):
-        x = self.model.infer(audio, init_prompt=init_prompt)
-        logger.debug(f"Transcription: {x}")
-        return x
+        logger.info("SimulWhisperASR's transcribe() should not be used. It's here only temporarily." \
+        "Instead, use SimulWhisperOnline.process_iter().")
+        raise NotImplementedError("Use SimulWhisperOnline.process_iter() instead of transcribe().")
 
     def warmup(self, audio, init_prompt=""):
         self.model.insert_audio(audio)
@@ -122,9 +120,8 @@ class SimulWhisperASR(ASRBase):
         print("VAD not implemented",file=sys.stderr)
 
     def set_translate_task(self):
-        self.model.tokenizer = tokenizer.get_tokenizer(multilingual=True, language=self.model.cfg.language, 
-                                                             num_languages=self.model.model.num_languages,
-                                                             task="translate")
+        # this is not used. Translate task is set another way.
+        pass
 
 
 class SimulWhisperOnline(OnlineProcessorInterface):
@@ -152,6 +149,8 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         self.audio_chunks.append(torch.from_numpy(audio))
 
     def timestamped_text(self, tokens, generation):
+        if not generation:
+            return []
 
         pr = generation["progress"]
         if "result" not in generation:
@@ -206,14 +205,12 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         e = max(e, self.last_ts[1]+1)
 
         self.last_ts = (self.beg, e)
-#        self.beg = e
         
         return (self.beg,e,text)
 
     def finish(self):
         logger.info("Finish")
         self.is_last = True
-        #self.insert_audio_chunk(np.array([],dtype=np.float32))
         o = self.process_iter()
         self.is_last = False
         self.model.refresh_segment(complete=True)
