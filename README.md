@@ -47,9 +47,10 @@ Follow [translate/README.txt](translate/README.txt).
 
 
 ```
-usage: simulstreaming_whisper.py [-h] [--min-chunk-size MIN_CHUNK_SIZE] [--lan LAN] [--task {transcribe,translate}] [--vac] [--vac-chunk-size VAC_CHUNK_SIZE] [--vad] [-l {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--model_path MODEL_PATH] [--beams BEAMS]
-                                 [--decoder DECODER] [--audio_max_len AUDIO_MAX_LEN] [--audio_min_len AUDIO_MIN_LEN] [--frame_threshold FRAME_THRESHOLD] [--cif_ckpt_path CIF_CKPT_PATH] [--never_fire | --no-never_fire] [--init_prompt INIT_PROMPT]
-                                 [--static_init_prompt STATIC_INIT_PROMPT] [--max_context_tokens MAX_CONTEXT_TOKENS] [--start_at START_AT] [--comp_unaware]
+usage: simulstreaming_whisper.py [-h] [--min-chunk-size MIN_CHUNK_SIZE] [--lan LAN] [--task {transcribe,translate}] [--vac] [--vac-chunk-size VAC_CHUNK_SIZE] [--vad]
+                                 [-l {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--model_path MODEL_PATH] [--beams BEAMS] [--decoder DECODER] [--audio_max_len AUDIO_MAX_LEN]
+                                 [--audio_min_len AUDIO_MIN_LEN] [--frame_threshold FRAME_THRESHOLD] [--cif_ckpt_path CIF_CKPT_PATH] [--never_fire | --no-never_fire]
+                                 [--init_prompt INIT_PROMPT] [--static_init_prompt STATIC_INIT_PROMPT] [--max_context_tokens MAX_CONTEXT_TOKENS] [--start_at START_AT] [--comp_unaware]
                                  audio_path
 
 options:
@@ -59,9 +60,10 @@ options:
 
 WhisperStreaming processor arguments (shared for simulation from file and for the server):
   --min-chunk-size MIN_CHUNK_SIZE
-                        Minimum audio chunk size in seconds. It waits up to this time to do processing. If the processing takes shorter time, it waits, otherwise it processes the whole segment that was received by this time.
+                        Minimum audio chunk size in seconds. It waits up to this time to do processing. If the processing takes shorter time, it waits, otherwise it processes the whole
+                        segment that was received by this time.
   --lan LAN, --language LAN
-                        Source language code, e.g. en,de,cs.
+                        Source language code, e.g. en, de, cs, or auto for automatic language detection from speech.
   --task {transcribe,translate}
                         Transcribe or translate.
   --vac                 Use VAC = voice activity controller. Recommended. Requires torch.
@@ -84,15 +86,17 @@ Audio buffer:
 
 AlignAtt argument:
   --frame_threshold FRAME_THRESHOLD
-                        Threshold for the attention-guided decoding. The AlignAtt policy will decode only until this number of frames from the end of audio. In frames: one frame is 0.02 seconds for large-v3 model.
+                        Threshold for the attention-guided decoding. The AlignAtt policy will decode only until this number of frames from the end of audio. In frames: one frame is 0.02
+                        seconds for large-v3 model.
 
 Truncation of the last decoded word (from Simul-Whisper):
   --cif_ckpt_path CIF_CKPT_PATH
-                        The file path to the Simul-Whisper's CIF model checkpoint that detects whether there isend of word at the end of the chunk. If not, the last decoded space-separated word is truncated because it is often wrong -- transcribing a
-                        word in the middle.The CIF model adapted for the Whisper model version should be used. Find the models in https://github.com/backspacetg/simul_whisper/tree/main/cif_models . Note that there is no model for large-v3.
+                        The file path to the Simul-Whisper's CIF model checkpoint that detects whether there isend of word at the end of the chunk. If not, the last decoded space-
+                        separated word is truncated because it is often wrong -- transcribing a word in the middle.The CIF model adapted for the Whisper model version should be used. Find
+                        the models in https://github.com/backspacetg/simul_whisper/tree/main/cif_models . Note that there is no model for large-v3.
   --never_fire, --no-never_fire
-                        Override the CIF model. If True, the last word is NEVER truncated, no matter what the CIF model detects. . If False: if CIF model path is set, the last word is SOMETIMES truncated, depending on the CIF detection. Otherwise, if
-                        the CIF model path is not set, the last word is ALWAYS trimmed. (default: False)
+                        Override the CIF model. If True, the last word is NEVER truncated, no matter what the CIF model detects. . If False: if CIF model path is set, the last word is
+                        SOMETIMES truncated, depending on the CIF detection. Otherwise, if the CIF model path is not set, the last word is ALWAYS trimmed. (default: False)
 
 Prompt and context:
   --init_prompt INIT_PROMPT
@@ -106,7 +110,6 @@ Arguments for simulation from file:
   audio_path            Filename of 16kHz mono channel wav, on which live streaming is simulated.
   --start_at START_AT   Start processing audio at this time.
   --comp_unaware        Computationally unaware simulation.
-
 ```
 
 Example:
