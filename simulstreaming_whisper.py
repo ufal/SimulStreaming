@@ -145,6 +145,8 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         self.last_ts = (-1,-1)
         self.model.refresh_segment(complete=True)
 
+        self.unicode_buffer = []  # hide incomplete unicode character for the next iteration
+
     def insert_audio_chunk(self, audio):
         self.audio_chunks.append(torch.from_numpy(audio))
 
@@ -153,7 +155,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
             return []
 
         pr = generation["progress"]
-        if "result" not in generation:
+        if "result" not in generation or self.unicode_buffer != []:
             split_words, split_tokens = self.model.tokenizer.split_to_word_tokens(tokens)
         else:
             split_words, split_tokens = generation["result"]["split_words"], generation["result"]["split_tokens"]
@@ -175,6 +177,22 @@ class SimulWhisperOnline(OnlineProcessorInterface):
             logger.debug(f"TS-WORD:\t{' '.join(map(str, out))}")
         return ret
 
+    def hide_incomplete_unicode(self, tokens):
+        """Sometimes, the last token is an imcomplete unicode character, e.g. a part of "ň" or "ř".
+        Without this, the outputs can end with '�' = Unicode Replacement Character, and the next output also
+        starts with '�'.
+        This function hides the last incomplete unicode character and adds it in the next iteration.
+        """
+        if self.unicode_buffer != []:
+            logger.debug(f"Hiding incomplete unicode character: {self.unicode_buffer}")
+            tokens = self.unicode_buffer + tokens
+            self.unicode_buffer = []  # clear the buffer after processing
+        chars, _ = self.model.tokenizer.split_tokens_on_unicode(tokens)
+        if len(chars) > 0 and chars[-1].endswith('�'):
+            self.unicode_buffer = tokens[-1:]  # keep the last incomplete unicode character
+            logger.debug(f"Hiding incomplete unicode character: {tokens[-1:]}")
+            return tokens[:-1]  # remove the last token, which is incomplete unicode character
+        return tokens
 
     def process_iter(self):
         if len(self.audio_chunks) == 0:
@@ -188,6 +206,8 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         self.audio_chunks = []
         self.audio_bufer_offset += self.model.insert_audio(audio)
         tokens, generation_progress = self.model.infer(is_last=self.is_last)
+
+        tokens = self.hide_incomplete_unicode(tokens)
 
         # word-level timestamps
         ts_words = self.timestamped_text(tokens, generation_progress)
