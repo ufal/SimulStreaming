@@ -67,7 +67,7 @@ def simul_asr_factory(args):
         # else: it is greedy or beam, that's ok 
     
     a = { v:getattr(args, v) for v in ["model_path", "cif_ckpt_path", "frame_threshold", "audio_min_len", "audio_max_len", "beams", "task",
-                                       "never_fire", 'init_prompt', 'static_init_prompt', 'max_context_tokens'
+                                       "never_fire", 'init_prompt', 'static_init_prompt', 'max_context_tokens', "logdir"
                                        ]}
     a["language"] = args.lan
     a["segment_length"] = args.min_chunk_size
@@ -86,7 +86,7 @@ class SimulWhisperASR(ASRBase):
     sep = " "
 
     def __init__(self, language, model_path, cif_ckpt_path, frame_threshold, audio_max_len, audio_min_len, segment_length, beams, task, 
-                 decoder_type, never_fire, init_prompt, static_init_prompt, max_context_tokens):
+                 decoder_type, never_fire, init_prompt, static_init_prompt, max_context_tokens, logdir):
         cfg = AlignAttConfig(
             model_path=model_path, 
             segment_length=segment_length,
@@ -102,6 +102,7 @@ class SimulWhisperASR(ASRBase):
             init_prompt=init_prompt,
             max_context_tokens=max_context_tokens,
             static_init_prompt=static_init_prompt,
+            logdir=logdir,
         )
         logger.info(f"Language: {language}")
         self.model = PaddedAlignAttWhisper(cfg)

@@ -25,6 +25,9 @@ class BeamTokens(Tokens):
     def __repr__(self):
         return self.__str__()
 
+    def as_text(self, tokenizer):
+        return tokenizer.decode(self.tokens)
+
 class Logits(Tokens):
     def __init__(self, logits):
         super().__init__(logits)

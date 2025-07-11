@@ -52,6 +52,8 @@ def processor_args(parser):
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], 
                         help="Set the log level", default='DEBUG')
 
+    parser.add_argument("--logdir", help="Directory to save audio segments and generated texts for debugging.",
+                       default=None)
 
 def asr_factory(args, factory=None):
     """

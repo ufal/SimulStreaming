@@ -17,6 +17,8 @@ class SimulWhisperConfig:
     static_init_prompt: str = field(default=None)
     max_context_tokens: int = field(default=None)
 
+    logdir: str = field(default="logdir", metadata={"help": "Directory to save audio segments and tokens for debugging purposes."})
+
 @dataclass
 class AlignAttConfig(SimulWhisperConfig):
     '''Options specific to the AlignAtt policy.'''

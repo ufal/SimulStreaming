@@ -24,6 +24,7 @@ DEC_PAD = 50257
 logger = logging.getLogger(__name__)
 
 import sys
+import wave
 
 # New features added to the original version of Simul-Whisper: 
 # - large-v3 model support
@@ -33,6 +34,10 @@ import sys
 # - context
 class PaddedAlignAttWhisper:
     def __init__(self, cfg: AlignAttConfig) -> None:
+        self.logdir_i = 0
+        self.log_segments = 0
+        if cfg.logdir is not None and not os.path.exists(cfg.logdir):
+            os.makedirs(cfg.logdir)
         model_name = os.path.basename(cfg.model_path).replace(".pt", "")
         model_path = os.path.dirname(os.path.abspath(cfg.model_path))
         self.model = load_model(name=model_name, download_root=model_path)
@@ -111,6 +116,7 @@ class PaddedAlignAttWhisper:
         # blank tokens are suppresed for new segments near the line 334
 
         # it's going to be regenerated after lang id
+        self.segments = []
         self.init_tokens()
         
         self.last_attend_frame = -self.cfg.rewind_threshold
@@ -153,6 +159,7 @@ class PaddedAlignAttWhisper:
             self.context.text += self.cfg.init_prompt
 
     def init_tokens(self):
+        logger.debug(f"init tokens, {len(self.segments)}")
         # init tokens (mandatory prompt)
         self.initial_tokens = torch.tensor(
             self.tokenizer.sot_sequence_including_notimestamps, 
@@ -160,7 +167,8 @@ class PaddedAlignAttWhisper:
             device=self.model.device).unsqueeze(0)
         self.initial_token_length = self.initial_tokens.shape[1]
         self.sot_index = self.tokenizer.sot_sequence.index(self.tokenizer.sot)
-        self.segments = []
+#        self.segments = []
+        logger.debug(f"init tokens after, {len(self.segments)}")
         self.tokens = [self.initial_tokens]
 
     def trim_context(self):
@@ -198,16 +206,19 @@ class PaddedAlignAttWhisper:
 
     def refresh_segment(self, complete=False):
 
-        logger.debug("Refreshing segment")
+        logger.debug("Refreshing segment:")
         self.init_tokens()
         self.last_attend_frame = -self.cfg.rewind_threshold       
         self.detected_language = None
         self.init_context()
         logger.debug(f"Context: {self.context}")
         if not complete and len(self.segments) > 2:
+            logger.debug("keeping last two segments because they are and it is not complete.")
             self.segments = self.segments[-2:]
         else:
+            logger.debug("removing all segments.")
             self.segments = []
+        self.log_segments += 1
 
 
     def fire_at_boundary(self, chunked_encoder_feature: torch.Tensor):
@@ -321,8 +332,13 @@ class PaddedAlignAttWhisper:
     def infer(self, is_last=False):
         new_segment = True
         if len(self.segments) == 0:
+            logger.debug("No segments, nothing to do")
+            self.logdir_save([], [], {})
             return [], {}
         if not self._apply_minseglen():
+            logger.debug(f"applied minseglen {self.cfg.audio_min_len} > {self.segments_len()}.")
+            input_segments = torch.cat(self.segments, dim=0)
+            self.logdir_save(input_segments, [], {})
             return [], {}
 
         # input_segments is concatenation of audio, it's one array
@@ -583,4 +599,50 @@ class PaddedAlignAttWhisper:
         logger.info(f"Output: {self.tokenizer.decode(new_hypothesis)}")
         
         self._clean_cache()
+
+        self.logdir_save(input_segments, new_hypothesis, generation)
         return new_hypothesis, generation
+
+    def logdir_save(self, input_segments, new_hypothesis, generation):
+        """The audio and result from each iteration is saved to the logdir for debugging purposes"""
+
+        # only when the logdir arg is set
+        if self.cfg.logdir is None:
+            return
+
+        self.logdir_i += 1
+
+        # every VAD segment is in a separate directory
+        dir = os.path.join(self.cfg.logdir, f"seg_{self.log_segments:05d}")
+        if not os.path.exists(dir):
+            os.makedirs(dir)
+
+        logger.debug(f"Saving to {dir}, iteration {self.logdir_i:05d}")
+
+        # saving wav:
+        wav_path = os.path.join(dir, f"iter_{self.logdir_i:05d}_audio.wav")
+        audio_np = np.array(input_segments)
+        # Ensure audio is float32 in range [-1, 1], convert to int16 for wav
+        if audio_np.dtype != np.int16:
+            audio_int16 = np.clip(audio_np * 32767, -32768, 32767).astype(np.int16)
+        else:
+            audio_int16 = audio_np
+
+        with wave.open(wav_path, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)  # 2 bytes for int16
+            wf.setframerate(16000)
+            wf.writeframes(audio_int16.tobytes())
+
+        # saving readable text: context + hypothesis
+        text = self.tokenizer.decode(new_hypothesis)
+        with open(os.path.join(dir, f"iter_{self.logdir_i:05d}_hypothesis.txt"), "w") as f:
+            if generation:
+                context = generation["starting_tokens"].as_text(self.tokenizer)
+            else:
+                context = ""
+            print("CONTEXT+FORCED:",context,sep="\t",file=f)
+            print("HYPOTHESIS:", text, sep="\t", file=f)
+
+        # TODO: generation progress can be also saved in a readable format
+        #logger.debug(f"generation progress: {generation}")
