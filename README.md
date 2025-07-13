@@ -47,7 +47,7 @@ Follow [translate/README.txt](translate/README.txt).
 
 
 ```
-usage: simulstreaming_whisper.py [-h] [--min-chunk-size MIN_CHUNK_SIZE] [--lan LAN] [--task {transcribe,translate}] [--vac] [--vac-chunk-size VAC_CHUNK_SIZE] [--vad]
+usage: simulstreaming_whisper.py [-h] [--min-chunk-size MIN_CHUNK_SIZE] [--lan LAN] [--task {transcribe,translate}] [--vac] [--vac-chunk-size VAC_CHUNK_SIZE]
                                  [-l {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--model_path MODEL_PATH] [--beams BEAMS] [--decoder DECODER] [--audio_max_len AUDIO_MAX_LEN]
                                  [--audio_min_len AUDIO_MIN_LEN] [--frame_threshold FRAME_THRESHOLD] [--cif_ckpt_path CIF_CKPT_PATH] [--never_fire | --no-never_fire]
                                  [--init_prompt INIT_PROMPT] [--static_init_prompt STATIC_INIT_PROMPT] [--max_context_tokens MAX_CONTEXT_TOKENS] [--start_at START_AT] [--comp_unaware]
@@ -69,7 +69,6 @@ WhisperStreaming processor arguments (shared for simulation from file and for th
   --vac                 Use VAC = voice activity controller. Recommended. Requires torch.
   --vac-chunk-size VAC_CHUNK_SIZE
                         VAC sample size in seconds.
-  --vad                 Use VAD = voice activity detection, with the default parameters.
 
 Whisper arguments:
   --model_path MODEL_PATH
