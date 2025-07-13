@@ -45,8 +45,6 @@ def processor_args(parser):
                         help='Use VAC = voice activity controller. Recommended. Requires torch.')
     group.add_argument('--vac-chunk-size', type=float, default=0.04, 
                         help='VAC sample size in seconds.')
-    group.add_argument('--vad', action="store_true", default=False, 
-                        help='Use VAD = voice activity detection, with the default parameters.')
 
     parser.add_argument("-l", "--log-level", dest="log_level", 
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], 
