@@ -279,8 +279,9 @@ class PaddedAlignAttWhisper:
             self.last_attend_frame -= int(TOKENS_PER_SECOND*removed_len)
             self.segments = self.segments[1:]
             logger.debug(f"remove segments: {len(self.segments)} {len(self.tokens)}")
-            self.context.append_token_ids(self.tokens[1][0,:])
-            self.tokens = [self.initial_tokens] + self.tokens[2:]
+            if len(self.tokens) > 1:
+                self.context.append_token_ids(self.tokens[1][0,:])
+                self.tokens = [self.initial_tokens] + self.tokens[2:]
         return removed_len
 
     def _clean_cache(self):
