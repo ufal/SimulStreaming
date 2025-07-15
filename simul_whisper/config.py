@@ -25,7 +25,7 @@ class AlignAttConfig(SimulWhisperConfig):
     eval_data_path: str = "tmp"
     segment_length: float = field(default=1.0, metadata = {"help": "in second"})
     frame_threshold: int = 4
-    rewind_threshold: int = 2000 # in frames. Max value is 1500. Higher value turns rewinds off.
+    rewind_threshold: int = 200 # in frames. Max value is 1500. Higher value turns rewinds off.
     audio_max_len: float = 30.0
     cif_ckpt_path: str = ""
     never_fire: bool = False
