@@ -43,8 +43,7 @@ class TextServerProcessor:
         self.connection = connection
         self.simul = simul
 
-        self.last_end = None
-        self.is_first = True
+        self.beg = 1
 
         self.buffer = ""
 
@@ -84,19 +83,32 @@ class TextServerProcessor:
         # Therefore, beg, is max of previous end and current beg outputed by Whisper.
         # Usually it differs negligibly, by appx 20 ms.
 
+        out = []
+        print("OUTPUT:",o,file=sys.stderr)
+        status, confirmed, unconfirmed = o
         if o:
-            beg, end = 1,2
-            if self.last_end is not None:
-                beg = max(beg, self.last_end)
+            beg, end = self.beg, self.beg + 1
+            if confirmed:
+                t = confirmed
+                m = "%1.0f %1.0f %s" % (beg,end,t)
+                out.append(m)
 
-            self.last_end = end
-            print("%1.0f %1.0f %s" % (beg,end,o),flush=True,file=sys.stderr)
-            return "%1.0f %1.0f %s" % (beg,end,o)
+                beg, end = self.beg+2, self.beg+3
+                if status == "COMPLETE":
+                    self.beg = self.beg + 2
+
+            if unconfirmed:
+                t = unconfirmed[:50] ## trim only the first 50 characters. The rest could be hallucination.
+                m = "%1.0f %1.0f %s" % (beg,end,t)
+                out.append(m)
+
+            return "\n".join(out)
         else:
             logger.debug("No text in this segment")
             return None
 
     def send_result(self, o):
+        """o is a triple Status, confirmed, unconfirmed or None/"" """
         msg = self.format_output_transcript(o)
         if msg is not None:
             self.connection.send(msg)
@@ -115,12 +127,12 @@ class TextServerProcessor:
                     self.simul.insert_suffix(w)
                 else:
                     self.simul.insert(w)
-            o = self.simul.process_iter_aware()
-            try:
-                self.send_result(o)
-            except BrokenPipeError:
-                logger.info("broken pipe -- connection closed?")
-                break
+            for o in self.simul.process_iter_aware():
+                try:
+                    self.send_result(o)
+                except BrokenPipeError:
+                    logger.info("broken pipe -- connection closed?")
+                    break
 
 #        o = online.finish()  # this should be working
 #        self.send_result(o)

@@ -313,7 +313,7 @@ class SimulLLM:
 
     def process_iter_aware(self):
         if self.buffer.len_src() + len(self.last_inserted) < self.min_len:
-            return ""
+            return ("COMPLETE", "", "")
 
         src, forced_tgt = self.buffer.trim() #llmtranslator.trim(" ".join(self.src_buffer), self.confirmed_tgt)
         #self.src_buffer = self.src_buffer.split()
@@ -345,7 +345,7 @@ class SimulLLM:
 #            print(confirmed_out, confirmed, file=sys.stderr)
                 confirmed_out += self.specific_space + confirmed
             print("CONFIRMED NOW:",confirmed,file=sys.stderr)
-
+            yield ("INCOMPLETE", confirmed_out, unconfirmed)
 
             print(file=sys.stderr)
             print(file=sys.stderr)
@@ -356,7 +356,7 @@ class SimulLLM:
 
         ret = confirmed_out
         print("RET:",ret,file=sys.stderr)
-        return ret
+        yield ("COMPLETE", ret, self.last_unconfirmed)
 
 
     def finalize(self):
