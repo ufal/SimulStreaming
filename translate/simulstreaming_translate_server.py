@@ -46,6 +46,8 @@ class TextServerProcessor:
         self.last_end = None
         self.is_first = True
 
+        self.buffer = ""
+
     def receive_input_chunk(self):
         # receive all audio that is available by this time
         # blocks operation if less than self.min_chunk seconds is available
@@ -55,12 +57,19 @@ class TextServerProcessor:
         print(lines,flush=True,file=sys.stderr)
         if lines is None:
             return None
+        if self.buffer:
+            lines[0] = self.buffer + lines[0]
+            self.buffer = ""
         for l in lines:
             if l == "": continue
-            l = "0 "+l
+            m = "0 "+l
             print(l,flush=True,file=sys.stderr)
-            for _,_,_,w in yield_input_line(l):
-                out.append(w)
+            try:
+                for _,_,_,w in yield_input_line(m):
+                    out.append(w)
+            except (IndexError, ValueError) as e:
+                self.buffer = l
+        print("OUT",out,flush=True,file=sys.stderr)
         return out
 
     def format_output_transcript(self,o):
@@ -100,6 +109,7 @@ class TextServerProcessor:
             if a is None or a == []:
                 break
             for w in a:
+                print("TADY",w,flush=True,file=sys.stderr)
                 if w.startswith(" "):
                     w = w[1:]
                     self.simul.insert_suffix(w)

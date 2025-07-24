@@ -1,9 +1,8 @@
 import sys
-
+import os
 import ctranslate2
 import sentencepiece as spm
 import transformers
-import argparse
 
 def generate_words(sp, step_results):
     tokens_buffer = []
@@ -28,14 +27,14 @@ from sentence_segmenter import SentenceSegmenter
 
 class LLMTranslator:
 
-    def __init__(self, system_prompt='Please translate.', max_context_length=4096, len_ratio=None):
+    def __init__(self, system_prompt='Please translate.', max_context_length=4096, len_ratio=None, model_dir="ct2_EuroLLM-9B-Instruct/", tokenizer_dir="EuroLLM-9B-Instruct/"):
         self.system_prompt = system_prompt
 
 
         print("Loading the model...", file=sys.stderr)
-        self.generator = ctranslate2.Generator("ct2_EuroLLM-9B-Instruct/", device="cuda")
-        self.sp = spm.SentencePieceProcessor("EuroLLM-9B-Instruct/tokenizer.model")
-        self.tokenizer = transformers.AutoTokenizer.from_pretrained("EuroLLM-9B-Instruct/")
+        self.generator = ctranslate2.Generator(model_dir, device="cuda")
+        self.sp = spm.SentencePieceProcessor(os.path.join(tokenizer_dir,"tokenizer.model"))
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(tokenizer_dir)
         print("...done", file=sys.stderr)
 
         self.max_context_length = max_context_length
@@ -250,7 +249,7 @@ class SimulLLM:
         '''
         if self.last_inserted:
             self.last_inserted[-1] += text
-        elif self.src_buffer:
+        elif self.buffer.src_buffer:
             self.buffer.insert_src_suffix(text)
         else:
             # this shouldn't happen
@@ -436,6 +435,10 @@ def translate_args(parser):
 
     parser.add_argument("--buffer_trimming", type=str, default="sentences", choices=["segments","sentences"], help="Buffer trimming strategy.")
 
+    parser.add_argument("--model-dir", type=str, default="ct2_EuroLLM-9B-Instruct/", help="ct2 model directory. If not set, the default ct2_EuroLLM-9B-Instruct/ is used.")
+    parser.add_argument("--tokenizer-dir", type=str, default="EuroLLM-9B-Instruct/", help="tokenizer directory. If not set, the default EuroLLM-9B-Instruct/ is used.")
+
+
     parser.add_argument("-l", "--log-level", dest="log_level", 
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], 
                         help="Set the log level", default='DEBUG')
@@ -483,7 +486,8 @@ def simul_translator_factory(args):
     else:
         len_threshold = args.len_threshold
 
-    llmtrans = LLMTranslator(system_prompt=sys_prompt, max_context_length=args.max_context_length, len_ratio=len_threshold)
+    llmtrans = LLMTranslator(system_prompt=sys_prompt, max_context_length=args.max_context_length, len_ratio=len_threshold,
+                             model_dir=args.model_dir, tokenizer_dir=args.tokenizer_dir)
     lan = args.lan if not args.lan.startswith("zh") else "zh"
     simul = SimulLLM(llmtrans,language=lan, min_len=args.min_len, chunk=args.min_chunk_size,
                     init_src=init_src, init_tgt=init_tgt, trimming=args.buffer_trimming
