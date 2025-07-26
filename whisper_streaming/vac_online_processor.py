@@ -99,7 +99,7 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
             return (None, None, "")
 
     def finish(self):
-        ret = self.online.finish()
+        b,e,t_ret = self.online.finish()
         self.current_online_chunk_buffer_size = 0
         self.is_currently_final = False
-        return ret
+        return (b,e,t_ret+" ŽžŽžENDofVOICEžŽžŽ")

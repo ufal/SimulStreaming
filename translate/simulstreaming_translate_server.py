@@ -46,6 +46,7 @@ class TextServerProcessor:
         self.beg = 1
 
         self.buffer = ""
+        self.endswith_eos = False
 
     def receive_input_chunk(self):
         # receive all audio that is available by this time
@@ -71,7 +72,7 @@ class TextServerProcessor:
         print("OUT",out,flush=True,file=sys.stderr)
         return out
 
-    def format_output_transcript(self,o):
+    def format_output_transcript(self,o, is_final=False):
         # output format in stdout is like:
         # 0 1720 Takhle to je
         # - the first two words are:
@@ -102,37 +103,66 @@ class TextServerProcessor:
                 m = "%1.0f %1.0f %s" % (beg,end,t)
                 out.append(m)
 
+            if out and any(out[-1].endswith(x) for x in [".", ". ", "?", "? ", "!", "! "]):
+                self.endswith_eos = True
+            else:
+                if is_final:
+                    self.endswith_eos = True
+                    logger.debug("Adding '. ' to the final segment")
+                    out[-1] += ". "
+                else:
+                    self.endswith_eos = False
             return "\n".join(out)
         else:
             logger.debug("No text in this segment")
+            if is_final and not self.endswith_eos:
+                logger.debug("Adding '. ' to the final segment")
+                return f"{self.beg} {self.beg+1} . "
             return None
 
-    def send_result(self, o):
+    def send_result(self, o, is_final=False):
         """o is a triple Status, confirmed, unconfirmed or None/"" """
-        msg = self.format_output_transcript(o)
-        if msg is not None:
+        msg = self.format_output_transcript(o, is_final=is_final)
+        if msg is not None and msg != "":
             self.connection.send(msg)
 
     def process(self):
+
+        def send_seq(out_seq):
+            for o in out_seq:
+                try:
+                    self.send_result(o)
+                except BrokenPipeError:
+                    logger.info("broken pipe -- connection closed?")
+                    break
+
         # handle one client connection
         self.simul.init()
         while True:
             a = self.receive_input_chunk()
             if a is None or a == []:
                 break
+            inserted = False
             for w in a:
                 print("TADY",w,flush=True,file=sys.stderr)
-                if w.startswith(" "):
-                    w = w[1:]
-                    self.simul.insert_suffix(w)
+                if w != "ŽžŽžENDofVOICEžŽžŽ":
+                    if w.startswith(" "):
+                        w = w[1:]
+                        self.simul.insert_suffix(w)
+                    else:
+                        self.simul.insert(w)
+                    inserted = True 
                 else:
-                    self.simul.insert(w)
-            for o in self.simul.process_iter_aware():
-                try:
-                    self.send_result(o)
-                except BrokenPipeError:
-                    logger.info("broken pipe -- connection closed?")
-                    break
+                    print("END OF VOICE",flush=True,file=sys.stderr)
+                    send_seq(self.simul.process_iter_aware())
+                    send_seq(self.simul.finish())
+                    self.simul.init()
+                    self.beg += 2
+                    print("jsme za init",flush=True,file=sys.stderr)
+                    inserted = False
+            if inserted:
+                send_seq(self.simul.process_iter_aware())
+
 
 #        o = online.finish()  # this should be working
 #        self.send_result(o)

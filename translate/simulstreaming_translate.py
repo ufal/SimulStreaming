@@ -359,8 +359,8 @@ class SimulLLM:
         yield ("COMPLETE", ret, self.last_unconfirmed)
 
 
-    def finalize(self):
-        return self.last_unconfirmed
+    def finish(self):
+        yield ("COMPLETE", "", self.last_unconfirmed)
 
 ### default prompts
 
