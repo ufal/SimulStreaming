@@ -7,10 +7,10 @@ logger = logging.getLogger(__name__)
 import sys
 
 class VACOnlineASRProcessor(OnlineProcessorInterface):
-    '''Wraps OnlineASRProcessor with VAC (Voice Activity Controller). 
+    '''Wraps OnlineASRProcessor with VAC (Voice Activity Controller).
 
-    It works the same way as OnlineASRProcessor: it receives chunks of audio (e.g. 0.04 seconds), 
-    it runs VAD and continuously detects whether there is speech or not. 
+    It works the same way as OnlineASRProcessor: it receives chunks of audio (e.g. 0.04 seconds),
+    it runs VAD and continuously detects whether there is speech or not.
     When it detects end of speech (non-voice for 500ms), it makes OnlineASRProcessor to end the utterance immediately.
     '''
 
@@ -27,7 +27,7 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
             repo_or_dir='snakers4/silero-vad',
             model='silero_vad'
         )
-        self.vac = FixedVADIterator(model)  # we use the default options there: 500ms silence, 100ms padding, etc.  
+        self.vac = FixedVADIterator(model)  # we use the default options there: 500ms silence, 100ms padding, etc.
 
         self.init()
 
@@ -58,8 +58,8 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
                 self.online.init(offset=frame/self.SAMPLING_RATE)
                 self.online.insert_audio_chunk(send_audio)
                 self.current_online_chunk_buffer_size += len(send_audio)
-                self.clear_buffer()
                 self.buffer_offset += len(self.audio_buffer)
+                self.clear_buffer()
             elif 'end' in res and 'start' not in res:
                 self.status = 'nonvoice'
                 send_audio = self.audio_buffer[:frame]
@@ -67,8 +67,8 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
                 self.current_online_chunk_buffer_size += len(send_audio)
                 self.is_currently_final = True
                 keep_frames = min(len(self.audio_buffer) - frame, self.min_buffered_frames)
-                self.audio_buffer = self.audio_buffer[-keep_frames:]
                 self.buffer_offset += len(self.audio_buffer) - keep_frames
+                self.audio_buffer = self.audio_buffer[-keep_frames:]
             else:
                 beg = res["start"]-self.buffer_offset
                 end = res["end"]-self.buffer_offset
@@ -79,19 +79,19 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
                 self.current_online_chunk_buffer_size += len(send_audio)
                 self.is_currently_final = True
                 keep_frames = min(len(self.audio_buffer) - end, self.min_buffered_frames)
-                self.audio_buffer = self.audio_buffer[-keep_frames:]
                 self.buffer_offset += len(self.audio_buffer) - keep_frames
+                self.audio_buffer = self.audio_buffer[-keep_frames:]
         else:
             if self.status == 'voice':
                 self.online.insert_audio_chunk(self.audio_buffer)
                 self.current_online_chunk_buffer_size += len(self.audio_buffer)
-                self.clear_buffer()
                 self.buffer_offset += len(self.audio_buffer)
+                self.clear_buffer()
             else:
                 # We keep 1 second because VAD may later find start of voice in it.
-                # But we trim it to prevent OOM. 
+                # But we trim it to prevent OOM.
+                self.buffer_offset += max(0, len(self.audio_buffer) - self.min_buffered_frames)
                 self.audio_buffer = self.audio_buffer[-self.min_buffered_frames:]
-                self.buffer_offset += max(0,len(self.audio_buffer) - self.min_buffered_frames)
 
     def process_iter(self):
         if self.is_currently_final:
