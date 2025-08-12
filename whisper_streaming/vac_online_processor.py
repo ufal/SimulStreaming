@@ -41,15 +41,15 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
         self.buffer_offset = 0  # in frames
 
     def clear_buffer(self):
-        #self.buffer_offset += len(self.audio_buffer)
         self.audio_buffer = np.array([],dtype=np.float32)
-
 
     def insert_audio_chunk(self, audio):
         res = self.vac(audio)
         self.audio_buffer = np.append(self.audio_buffer, audio)
         if res is not None:
-            frame = list(res.values())[0]
+            if 'start' in res:
+                res['start'] = max(0, res['start'] - 8000)
+            frame = list(res.values())[0] - self.buffer_offset
             if 'start' in res and 'end' not in res:
                 self.status = 'voice'
                 send_audio = self.audio_buffer[frame:]
@@ -57,13 +57,15 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
                 self.online.insert_audio_chunk(send_audio)
                 self.current_online_chunk_buffer_size += len(send_audio)
                 self.clear_buffer()
+                self.buffer_offset += len(self.audio_buffer)
             elif 'end' in res and 'start' not in res:
                 self.status = 'nonvoice'
                 send_audio = self.audio_buffer[:frame]
                 self.online.insert_audio_chunk(send_audio)
                 self.current_online_chunk_buffer_size += len(send_audio)
                 self.is_currently_final = True
-                self.clear_buffer()
+                self.audio_buffer = self.audio_buffer[frame:]
+                self.buffer_offset += frame
             else:
                 beg = res["start"]-self.buffer_offset
                 end = res["end"]-self.buffer_offset
@@ -73,18 +75,19 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
                 self.online.insert_audio_chunk(send_audio)
                 self.current_online_chunk_buffer_size += len(send_audio)
                 self.is_currently_final = True
-                #self.buffer_offset += len(self.audio_buffer)-res["start"] + len(self.audio_buffer)-res["end"]
-                self.clear_buffer()
+                self.audio_buffer = self.audio_buffer[end:]
+                self.buffer_offset += end
         else:
             if self.status == 'voice':
                 self.online.insert_audio_chunk(self.audio_buffer)
                 self.current_online_chunk_buffer_size += len(self.audio_buffer)
                 self.clear_buffer()
+                self.buffer_offset += len(self.audio_buffer)
             else:
                 # We keep 1 second because VAD may later find start of voice in it.
                 # But we trim it to prevent OOM. 
-                self.buffer_offset += max(0,len(self.audio_buffer)-self.SAMPLING_RATE)
                 self.audio_buffer = self.audio_buffer[-self.SAMPLING_RATE:]
+                self.buffer_offset += max(0,len(self.audio_buffer)-self.SAMPLING_RATE)
 
 
     def process_iter(self):
