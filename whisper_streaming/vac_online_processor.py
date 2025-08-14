@@ -14,7 +14,7 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
     When it detects end of speech (non-voice for 500ms), it makes OnlineASRProcessor to end the utterance immediately.
     '''
 
-    def __init__(self, online_chunk_size, online, min_buffered_length=1, start_padding=0.5):
+    def __init__(self, online_chunk_size, online, min_buffered_length=1, start_padding=0):
         self.online_chunk_size = online_chunk_size
         self.online = online
 
@@ -50,33 +50,38 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
         self.audio_buffer = np.append(self.audio_buffer, audio)
         if res is not None:
             if 'start' in res:
+                res['start'] = max(0, res['start'] - self.buffer_offset)
                 res['start'] = max(0, res['start'] - self.start_padding_frames)
-            frame = list(res.values())[0] - self.buffer_offset
+            if 'end' in res:
+                res['end'] = max(0, res['end'] - self.buffer_offset)
+            frame = list(res.values())[0]
             if 'start' in res and 'end' not in res:
                 self.status = 'voice'
                 send_audio = self.audio_buffer[frame:]
-                self.online.init(offset=frame/self.SAMPLING_RATE)
+                self.online.init(offset=(frame + self.buffer_offset)/self.SAMPLING_RATE)
                 self.online.insert_audio_chunk(send_audio)
                 self.current_online_chunk_buffer_size += len(send_audio)
                 self.buffer_offset += len(self.audio_buffer)
                 self.clear_buffer()
             elif 'end' in res and 'start' not in res:
                 self.status = 'nonvoice'
-                send_audio = self.audio_buffer[:frame]
-                self.online.insert_audio_chunk(send_audio)
-                self.current_online_chunk_buffer_size += len(send_audio)
+                if frame > 0:
+                    send_audio = self.audio_buffer[:frame]
+                    self.online.insert_audio_chunk(send_audio)
+                    self.current_online_chunk_buffer_size += len(send_audio)
                 self.is_currently_final = True
                 keep_frames = min(len(self.audio_buffer) - frame, self.min_buffered_frames)
                 self.buffer_offset += len(self.audio_buffer) - keep_frames
                 self.audio_buffer = self.audio_buffer[-keep_frames:]
             else:
-                beg = res["start"]-self.buffer_offset
-                end = res["end"]-self.buffer_offset
+                beg = res["start"]
+                end = res["end"]
                 self.status = 'nonvoice'
-                send_audio = self.audio_buffer[beg:end]
-                self.online.init(offset=(res["start"]/self.SAMPLING_RATE))
-                self.online.insert_audio_chunk(send_audio)
-                self.current_online_chunk_buffer_size += len(send_audio)
+                if beg < end:
+                    send_audio = self.audio_buffer[beg:end]
+                    self.online.init(offset=((res["start"] + self.buffer_offset)/self.SAMPLING_RATE))
+                    self.online.insert_audio_chunk(send_audio)
+                    self.current_online_chunk_buffer_size += len(send_audio)
                 self.is_currently_final = True
                 keep_frames = min(len(self.audio_buffer) - end, self.min_buffered_frames)
                 self.buffer_offset += len(self.audio_buffer) - keep_frames
