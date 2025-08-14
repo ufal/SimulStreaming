@@ -14,12 +14,11 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
     When it detects end of speech (non-voice for 500ms), it makes OnlineASRProcessor to end the utterance immediately.
     '''
 
-    def __init__(self, online_chunk_size, online, min_buffered_length=1, start_padding=0):
+    def __init__(self, online_chunk_size, online, min_buffered_length=1):
         self.online_chunk_size = online_chunk_size
         self.online = online
 
         self.min_buffered_frames = int(min_buffered_length * self.SAMPLING_RATE)
-        self.start_padding_frames = int(start_padding * self.SAMPLING_RATE)
 
         # VAC:
         import torch
@@ -51,7 +50,6 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
         if res is not None:
             if 'start' in res:
                 res['start'] = max(0, res['start'] - self.buffer_offset)
-                res['start'] = max(0, res['start'] - self.start_padding_frames)
             if 'end' in res:
                 res['end'] = max(0, res['end'] - self.buffer_offset)
             frame = list(res.values())[0]
