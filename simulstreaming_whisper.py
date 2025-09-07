@@ -143,7 +143,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         self.end = self.offset
 
         self.audio_bufer_offset = self.offset
-        self.last_ts = (-1,-1)
+        self.last_ts = -1
         self.model.refresh_segment(complete=True)
 
         self.unicode_buffer = []  # hide incomplete unicode character for the next iteration
@@ -177,9 +177,12 @@ class SimulWhisperOnline(OnlineProcessorInterface):
                 if b is None:
                     b = f
             e = f
-            out = (b*0.02, e*0.02, sw)
-            ret.append(out)
-            logger.debug(f"TS-WORD:\t{' '.join(map(str, out))}")
+            ret.append({
+                'start': b * 0.02 + self.audio_bufer_offset,
+                'end': e * 0.02 + self.audio_bufer_offset,
+                'text': sw,
+                'tokens': st,
+            })
         return ret
 
     def hide_incomplete_unicode(self, tokens):
@@ -217,21 +220,28 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         # word-level timestamps
         ts_words = self.timestamped_text(tokens, generation_progress)
 
-        text = self.model.tokenizer.decode(tokens)
-
+        text = self.model.tokenizer.decode(tokens)  # TODO: do not convert tokens to text in two places
         if len(text) == 0:
-            return (None,None,"")
-        self.beg = ts_words[0][0]+self.audio_bufer_offset  # it should be this
-        self.beg = max(self.beg, self.last_ts[0]+1)  # but let's create the timestamps non-decreasing -- at least last beg + 1 
+            return {}
+        
+        self.beg = min(word['start'] for word in ts_words)  # it should be this
+        self.beg = max(self.beg, self.last_ts + 0.001)  # but let's create the timestamps non-decreasing -- at least last beg + 1
         if self.is_last:
             e = self.end
         else:
-            e = ts_words[-1][1]+self.audio_bufer_offset
-        e = max(e, self.last_ts[1]+1)
+            e = max(word['end'] for word in ts_words)
+        e = max(e, self.beg + 0.001)
 
-        self.last_ts = (self.beg, e)
-        
-        return (self.beg,e,text)
+        self.last_ts = e
+
+        # return (self.beg,e,text)
+        return {
+            'start': self.beg,
+            'end': e,
+            'text': text,
+            'tokens': tokens,
+            'words': ts_words
+        }
 
     def finish(self):
         logger.info("Finish")

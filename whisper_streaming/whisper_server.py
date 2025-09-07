@@ -5,6 +5,7 @@ import sys
 import argparse
 import os
 import logging
+import json
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -57,8 +58,6 @@ class ServerProcessor:
         self.online_asr_proc = online_asr_proc
         self.min_chunk = min_chunk
 
-        self.last_end = None
-
         self.is_first = True
 
     def receive_audio_chunk(self):
@@ -83,46 +82,25 @@ class ServerProcessor:
         self.is_first = False
         return np.concatenate(out)
 
-    def format_output_transcript(self,o):
-        # output format in stdout is like:
-        # 0 1720 Takhle to je
-        # - the first two words are:
-        #    - beg and end timestamp of the text segment, as estimated by Whisper model. The timestamps are not accurate, but they're useful anyway
-        # - the next words: segment transcript
-
-        # This function differs from whisper_online.output_transcript in the following:
-        # succeeding [beg,end] intervals are not overlapping because ELITR protocol (implemented in online-text-flow events) requires it.
-        # Therefore, beg, is max of previous end and current beg outputed by Whisper.
-        # Usually it differs negligibly, by appx 20 ms.
-
-        if o[0] is not None:
-            beg, end = o[0]*1000,o[1]*1000
-            if self.last_end is not None:
-                beg = max(beg, self.last_end)
-
-            self.last_end = end
-            print("%1.0f %1.0f %s" % (beg,end,o[2]),flush=True,file=sys.stderr)
-            return "%1.0f %1.0f %s" % (beg,end,o[2])
+    def send_result(self, iteration_output):
+        if iteration_output:
+            json_message = json.dumps(iteration_output)
+            print(json_message, flush=True, file=sys.stderr)
+            self.connection.send(json_message)
         else:
             logger.debug("No text in this segment")
-            return None
-
-    def send_result(self, o):
-        msg = self.format_output_transcript(o)
-        if msg is not None:
-            self.connection.send(msg)
 
     def process(self):
         # handle one client connection
         self.online_asr_proc.init()
         while True:
-            a = self.receive_audio_chunk()
-            if a is None:
+            audio_chunk = self.receive_audio_chunk()
+            if audio_chunk is None:
                 break
-            self.online_asr_proc.insert_audio_chunk(a)
-            o = self.online_asr_proc.process_iter()
+            self.online_asr_proc.insert_audio_chunk(audio_chunk)
+            iteration_output = self.online_asr_proc.process_iter()
             try:
-                self.send_result(o)
+                self.send_result(iteration_output)
             except BrokenPipeError:
                 logger.info("broken pipe -- connection closed?")
                 break
