@@ -178,8 +178,8 @@ class SimulWhisperOnline(OnlineProcessorInterface):
                     b = f
             e = f
             ret.append({
-                'start': b * 0.02,
-                'end': e * 0.02,
+                'start': b * 0.02 + self.audio_bufer_offset,
+                'end': e * 0.02 + self.audio_bufer_offset,
                 'text': sw,
                 'tokens': st,
             })
@@ -224,12 +224,12 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         if len(text) == 0:
             return {}
         
-        self.beg = ts_words[0]['start']+self.audio_bufer_offset  # it should be this
+        self.beg = ts_words[0]['start']  # it should be this
         self.beg = max(self.beg, self.last_ts+1)  # but let's create the timestamps non-decreasing -- at least last beg + 1
         if self.is_last:
             e = self.end
         else:
-            e = ts_words[-1]['end']+self.audio_bufer_offset
+            e = ts_words[-1]['end']
         e = max(e, self.beg+1)
 
         self.last_ts = e
