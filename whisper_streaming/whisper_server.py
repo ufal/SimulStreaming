@@ -85,7 +85,7 @@ class ServerProcessor:
     def send_result(self, iteration_output):
         if iteration_output:
             json_message = json.dumps(iteration_output)
-            print(json_message = json.dumps(iteration_output), flush=True, file=sys.stderr)
+            print(json_message, flush=True, file=sys.stderr)
             self.connection.send(json_message)
         else:
             logger.debug("No text in this segment")
