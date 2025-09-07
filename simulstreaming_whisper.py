@@ -224,12 +224,12 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         if len(text) == 0:
             return {}
         
-        self.beg = ts_words[0]['start']  # it should be this
+        self.beg = min(word['start'] for word in ts_words)  # it should be this
         self.beg = max(self.beg, self.last_ts + 0.001)  # but let's create the timestamps non-decreasing -- at least last beg + 1
         if self.is_last:
             e = self.end
         else:
-            e = ts_words[-1]['end']
+            e = max(word['end'] for word in ts_words)
         e = max(e, self.beg + 0.001)
 
         self.last_ts = e
