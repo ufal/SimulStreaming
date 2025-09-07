@@ -84,6 +84,14 @@ class ServerProcessor:
 
     def send_result(self, iteration_output):
         if iteration_output:
+            # print to stderr for debugging
+            print(
+                json.dumps(iteration_output, indent=4, sort_keys=True),
+                flush=True,
+                file=sys.stderr
+                )
+
+            # send over tcp
             json_message = json.dumps(iteration_output)
             self.connection.send(json_message)
         else:
