@@ -370,6 +370,7 @@ lan_to_name = {
     "zh-tr": "Chinese Traditional",
     "zh-sim": "Chinese Simplified",
     "cs": "Czech",
+    "hu": "Hungarian",
     # TODO: all EuroLLM languages
     }
 
@@ -386,6 +387,7 @@ default_inits_tgt = {
     'zh-tr': "請繼續，您可以開始您的簡報，我們已經準備好了。",
     'zh-sim': "请吧，你可以开始发言了，我们已经准备好了。",
     'cs': "Prosím, můžete začít s prezentací, jsme připraveni.",
+    "hu": "Kérlek, kezdheted a prezentációdat, készen állunk."
 }
 
 # how many times is target text longer than English
@@ -397,7 +399,10 @@ lan_thresholds = {
     'zh': 1.23,  # 12115/9817
     'zh-tr': 1.23, # 12115/9817
     'zh-sim': 1.23, # 12115/9817
-#    'cs': I don't know    # guessed
+
+    # TODO: guessed, not measured:
+    'hu': 1.34,  
+   # 'cs': I don't know    # guessed
 }
 
 
