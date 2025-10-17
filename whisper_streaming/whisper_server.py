@@ -57,8 +57,6 @@ class ServerProcessor:
         self.online_asr_proc = online_asr_proc
         self.min_chunk = min_chunk
 
-        self.last_end = None
-
         self.is_first = True
 
     def receive_audio_chunk(self):
@@ -83,34 +81,18 @@ class ServerProcessor:
         self.is_first = False
         return np.concatenate(out)
 
-    def format_output_transcript(self,o):
+    def send_result(self, iteration_output):
         # output format in stdout is like:
         # 0 1720 Takhle to je
         # - the first two words are:
         #    - beg and end timestamp of the text segment, as estimated by Whisper model. The timestamps are not accurate, but they're useful anyway
         # - the next words: segment transcript
-
-        # This function differs from whisper_online.output_transcript in the following:
-        # succeeding [beg,end] intervals are not overlapping because ELITR protocol (implemented in online-text-flow events) requires it.
-        # Therefore, beg, is max of previous end and current beg outputed by Whisper.
-        # Usually it differs negligibly, by appx 20 ms.
-
-        if o[0] is not None:
-            beg, end = o[0]*1000,o[1]*1000
-            if self.last_end is not None:
-                beg = max(beg, self.last_end)
-
-            self.last_end = end
-            print("%1.0f %1.0f %s" % (beg,end,o[2]),flush=True,file=sys.stderr)
-            return "%1.0f %1.0f %s" % (beg,end,o[2])
+        if iteration_output:
+            message = f'{iteration_output["start"]} {iteration_output["end"]} {iteration_output["end"]}'
+            print(message, flush=True, file=sys.stderr)
+            self.connection.send(message)
         else:
             logger.debug("No text in this segment")
-            return None
-
-    def send_result(self, o):
-        msg = self.format_output_transcript(o)
-        if msg is not None:
-            self.connection.send(msg)
 
     def process(self):
         # handle one client connection

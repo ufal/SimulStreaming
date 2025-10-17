@@ -102,7 +102,7 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
             return ret
         else:
             logger.info(f"no online update, only VAD. {self.status}")
-            return (None, None, "")
+            return {}
 
     def finish(self):
         ret = self.online.finish()
