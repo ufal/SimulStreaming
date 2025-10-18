@@ -219,7 +219,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 
         tokens = self.hide_incomplete_unicode(tokens)
 
-        text = self.model.tokenizer.decode(tokens)  # TODO: do not convert tokens to text in two places
+        text = self.model.tokenizer.decode(tokens)
         if len(text) == 0:
             return {}
         
