@@ -88,7 +88,7 @@ class ServerProcessor:
         #    - beg and end timestamp of the text segment, as estimated by Whisper model. The timestamps are not accurate, but they're useful anyway
         # - the next words: segment transcript
         if iteration_output:
-            message = f'{iteration_output["start"]} {iteration_output["end"]} {iteration_output["end"]}'
+            message = f'{iteration_output["start"]} {iteration_output["end"]} {iteration_output["text"]}'
             print(message, flush=True, file=sys.stderr)
             self.connection.send(message)
         else:
