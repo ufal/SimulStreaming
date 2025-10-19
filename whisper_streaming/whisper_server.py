@@ -53,10 +53,11 @@ import soundfile
 # next client should be served by a new instance of this object
 class ServerProcessor:
 
-    def __init__(self, c, online_asr_proc, min_chunk):
+    def __init__(self, c, online_asr_proc, min_chunk, out_txt: bool):
         self.connection = c
         self.online_asr_proc = online_asr_proc
         self.min_chunk = min_chunk
+        self.out_txt = out_txt
 
         self.is_first = True
 
@@ -89,7 +90,10 @@ class ServerProcessor:
         #    - beg and end timestamp of the text segment, as estimated by Whisper model. The timestamps are not accurate, but they're useful anyway
         # - the next words: segment transcript
         if iteration_output:
-            message = json.dumps(iteration_output)
+            if self.out_txt:
+                message = "%1.0f %1.0f %s" % (iteration_output['start'] * 1000, iteration_output['end'] * 1000, iteration_output['text'])
+            else:
+                message = json.dumps(iteration_output)
             print(message, flush=True, file=sys.stderr)
             self.connection.send(message)
         else:
@@ -128,6 +132,7 @@ def main_server(factory, add_args):
     parser.add_argument("--warmup-file", type=str, dest="warmup_file", 
             help="The path to a speech audio wav file to warm up Whisper so that the very first chunk processing is fast. It can be e.g. "
             "https://github.com/ggerganov/whisper.cpp/raw/master/samples/jfk.wav .")
+    parser.add_argument("--out-txt", action="store_true")
 
     # options from whisper_online
     processor_args(parser)
@@ -171,7 +176,7 @@ def main_server(factory, add_args):
             conn, addr = s.accept()
             logger.info('Connected to client on {}'.format(addr))
             connection = Connection(conn)
-            proc = ServerProcessor(connection, online, min_chunk)
+            proc = ServerProcessor(connection, online, min_chunk, args.out_txt)
             proc.process()
             conn.close()
             logger.info('Connection to client closed')
