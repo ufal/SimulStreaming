@@ -5,6 +5,7 @@ import sys
 import argparse
 import os
 import logging
+import json
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ class ServerProcessor:
         #    - beg and end timestamp of the text segment, as estimated by Whisper model. The timestamps are not accurate, but they're useful anyway
         # - the next words: segment transcript
         if iteration_output:
-            message = "%1.0f %1.0f %s" % (iteration_output['start'] * 1000, iteration_output['end'] * 1000, iteration_output['text'])
+            message = json.dumps(iteration_output)
             print(message, flush=True, file=sys.stderr)
             self.connection.send(message)
         else:
