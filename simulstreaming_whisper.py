@@ -162,7 +162,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
             split_words, split_tokens = generation["result"]["split_words"], generation["result"]["split_tokens"]
 
         frames = [p["most_attended_frames"][0] for p in pr]
-        if frames and self.unicode_buffer != []:
+        if self.unicode_buffer != []:
             a = [frames[0]] * len(self.unicode_buffer)
             frames = a + frames
             
