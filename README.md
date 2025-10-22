@@ -130,7 +130,7 @@ Simulation modes:
 
 ### Server -- real-time from mic 
 
-The entry point `simulstreaming_whisper_server.py` has the same model options as `simulstreaming_whisper.py`, plus `--host` and `--port` of the TCP connection and the `--warmup-file`. The warmup file is decoded by the Whisper backend after the model is loaded because without that, processing of the very the first input chunk may take longer.
+The entry point `simulstreaming_whisper_server.py` has the same model options as `simulstreaming_whisper.py`, plus `--host` and `--port` of the TCP connection, `--out-txt`, which switches the output format from json to simple text with timestamp information, and the `--warmup-file`. The warmup file is decoded by the Whisper backend after the model is loaded because without that, processing of the very the first input chunk may take longer.
 
 See the help message (`-h` option).
 
@@ -150,7 +150,7 @@ arecord -f S16_LE -c1 -r 16000 -t raw -D default | nc localhost 43001
 
 ### Output format
 
-This is example of the output format of the simulation from file. The output from the server is the same except that the first space-separated column is not there.
+This is example of the output format of the simulation from file. 
 
 ```
 1200.0000 0 1200  And so
@@ -170,6 +170,7 @@ It's space-separated. The first three columns are:
 - columns 2-3: the beginning and end timestamp of the line in original audio. (TODO: it should be, currently it is very rough approximation.)
 - columns 4-: This column starts either with a space, if the previous line had to be appended with a space, or with a character that has to be appended to the previous line (like comma or dot).
 
+The output from the server is in json format by default. If argument --out-txt is passed, the output from the server is the same as the output from the simulation from file, except the first column is not there.
 
 
 ## 📣 Feedback Welcome!
