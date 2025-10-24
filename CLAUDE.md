@@ -205,10 +205,19 @@ pytest -m "not requires_model"
 - `@pytest.mark.requires_model`: Tests requiring model download
 - `@pytest.mark.requires_cuda`: Tests requiring CUDA
 
+## Reproducing IWSLT 2025 Results
+
+See **[REPRODUCTION.md](REPRODUCTION.md)** for detailed instructions on reproducing the CUNI IWSLT 2025 results, including:
+- Downloading the ACL 60-60 evaluation dataset
+- Setting up models (Whisper large-v3, EuroLLM)
+- Running evaluations with proper configurations
+- Computing BLEU scores and latency metrics
+- Expected performance benchmarks
+
 ## Development Notes
 
 - Code origin: `simul_whisper/whisper/` is modified OpenAI Whisper, `whisper_streaming/` is refactored WhisperStreaming
 - Logging: Use `--log-level DEBUG` for detailed debugging, especially useful with `--start_at` for specific audio segments
 - Testing VAC: VAC (`--vac`) requires torchaudio and improves quality by handling silence/speech boundaries
 - Translation cascade: Optional EuroLLM integration in `translate/` for speech-to-text-to-translation pipeline
-- **Rebasing**: When rebasing on upstream, preserve the following new files: `pyproject.toml`, `tests/`, `.gitignore`, `whisper_streaming/__init__.py`. Do not move or restructure existing upstream files.
+- **Rebasing**: When rebasing on upstream, preserve the following new files: `pyproject.toml`, `tests/`, `.gitignore`, `whisper_streaming/__init__.py`, `REPRODUCTION.md`. Do not move or restructure existing upstream files.
