@@ -11,7 +11,9 @@ torch
 tqdm
 tiktoken
 
-# both Whisper and SimulWhisper. SimulWhisper requires <3
-triton>=2.0.0,<3;platform_machine=="x86_64" and sys_platform=="linux" or sys_platform=="linux2"
+# both Whisper and SimulWhisper
+# triton is used optionally for CUDA acceleration in triton_ops.py (dtw_kernel, median_filter)
+# with fallback implementations if triton fails. Core APIs (jit, language, JITFunction) are stable.
+triton>=2.0.0
 
 
