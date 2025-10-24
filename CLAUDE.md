@@ -214,6 +214,221 @@ See **[REPRODUCTION.md](REPRODUCTION.md)** for detailed instructions on reproduc
 - Computing BLEU scores and latency metrics
 - Expected performance benchmarks
 
+## Python API Usage (Direct Integration)
+
+You can use SimulStreaming as a Python library without the server or file simulation layers. This is ideal for integrating into other applications like microphone streaming.
+
+### Quick Start Example
+
+```python
+from simulstreaming_whisper import simul_asr_factory
+import argparse
+import numpy as np
+
+# Create configuration
+args = argparse.Namespace(
+    model_path="./large-v3.pt",
+    language="en",
+    task="transcribe",
+    frame_threshold=25,
+    segment_length=2.0,
+    beams=1,
+    decoder_type="greedy",
+    audio_min_len=0.0,
+    audio_max_len=30.0,
+    vac=False,
+    cif_ckpt_path=None,
+    never_fire=False,
+    init_prompt=None,
+    static_init_prompt=None,
+    max_context_tokens=None,
+    logdir=None
+)
+
+# Create ASR and online processor
+asr, online_processor = simul_asr_factory(args)
+
+# Initialize
+online_processor.init()
+
+# Stream audio chunks (from microphone, file, etc.)
+while recording:
+    # Get audio chunk: numpy array, 16kHz, mono, float32
+    audio_chunk = get_audio_from_microphone()
+
+    # Insert audio into processor
+    online_processor.insert_audio_chunk(audio_chunk)
+
+    # Process and get result
+    output = online_processor.process_iter()
+
+    if output:
+        start_ms = output['start'] * 1000
+        end_ms = output['end'] * 1000
+        text = output['text']
+        print(f"{start_ms:.0f} {end_ms:.0f} {text}")
+
+# Finish processing remaining audio
+final_output = online_processor.finish()
+if final_output:
+    print(f"{final_output['start']*1000:.0f} {final_output['end']*1000:.0f} {final_output['text']}")
+```
+
+### Low-Level API (PaddedAlignAttWhisper)
+
+For more control, use the core AlignAtt class directly:
+
+```python
+from simul_whisper.simul_whisper import PaddedAlignAttWhisper
+from simul_whisper.config import AlignAttConfig
+
+# Create configuration
+cfg = AlignAttConfig(
+    model_path="./large-v3.pt",
+    segment_length=2.0,
+    frame_threshold=25,
+    language="en",
+    task="transcribe",
+    beam_size=1,
+    decoder_type="greedy",
+    audio_max_len=30.0,
+    audio_min_len=0.0
+)
+
+# Initialize
+whisper = PaddedAlignAttWhisper(cfg)
+
+# Use whisper object for processing
+# (see simul_whisper.py for available methods)
+```
+
+### Using from Another Directory
+
+To use SimulStreaming from another project directory (e.g., `../sprechtast/`):
+
+**Option 1: Install as editable package**
+```bash
+cd /path/to/SimulStreaming
+pip install -e .
+```
+
+Then in `../sprechtast/`:
+```python
+# Works from anywhere after pip install -e
+from simulstreaming_whisper import simul_asr_factory
+from simul_whisper.config import AlignAttConfig
+```
+
+**Option 2: Add to Python path**
+```python
+import sys
+sys.path.insert(0, '/path/to/SimulStreaming')
+
+from simulstreaming_whisper import simul_asr_factory
+```
+
+### Microphone Streaming Example
+
+Complete example for real-time microphone transcription:
+
+```python
+import sys
+sys.path.insert(0, '../SimulStreaming')
+
+from simulstreaming_whisper import simul_asr_factory
+import argparse
+import numpy as np
+import pyaudio
+
+# Configuration
+args = argparse.Namespace(
+    model_path="../SimulStreaming/large-v3.pt",
+    language="en",
+    task="transcribe",
+    frame_threshold=25,
+    segment_length=2.0,
+    beams=1,
+    decoder_type="greedy",
+    audio_min_len=0.5,
+    audio_max_len=30.0,
+    vac=False,
+    cif_ckpt_path=None,
+    never_fire=False,
+    init_prompt=None,
+    static_init_prompt=None,
+    max_context_tokens=None,
+    logdir=None
+)
+
+# Initialize ASR
+asr, online = simul_asr_factory(args)
+online.init()
+
+# Setup PyAudio
+CHUNK = 1024
+RATE = 16000
+p = pyaudio.PyAudio()
+
+stream = p.open(
+    format=pyaudio.paFloat32,
+    channels=1,
+    rate=RATE,
+    input=True,
+    frames_per_buffer=CHUNK
+)
+
+print("Recording... (Ctrl+C to stop)")
+
+try:
+    while True:
+        # Read audio chunk
+        data = stream.read(CHUNK)
+        audio = np.frombuffer(data, dtype=np.float32)
+
+        # Process
+        online.insert_audio_chunk(audio)
+        output = online.process_iter()
+
+        if output:
+            print(f"{output['text']}", flush=True)
+
+except KeyboardInterrupt:
+    print("\nStopping...")
+
+finally:
+    stream.stop_stream()
+    stream.close()
+    p.terminate()
+
+    # Process remaining audio
+    final = online.finish()
+    if final:
+        print(f"{final['text']}")
+```
+
+### Key Points for Integration
+
+1. **Audio Format**: Input must be numpy array, float32, 16kHz, mono
+2. **Chunk Size**: Minimum ~0.5-1.0 seconds recommended for good performance
+3. **Initialization**: Call `online.init()` before processing
+4. **Output**: Returns dict with `start`, `end` (seconds), and `text` fields
+5. **Finish**: Call `online.finish()` at end to process remaining buffered audio
+6. **CPU Mode**: Set `CUDA_VISIBLE_DEVICES=""` for CPU-only execution
+
+### Whisper Task Modes
+
+- **`task="transcribe"`**: Speech recognition in original language (German audio → German text)
+- **`task="translate"`**: Speech translation to English only (German audio → English text)
+
+Note: Whisper can only translate TO English, not FROM English to other languages. For English→Other, use the EuroLLM cascade (see `translate/`).
+
+### Performance Notes
+
+- **CPU Testing**: Force CPU with `CUDA_VISIBLE_DEVICES="" python your_script.py`
+- **GPU Requirements**: Whisper large-v3 requires ~8GB VRAM and compute capability sm_70+
+- **Latency**: Controlled by `frame_threshold` (lower = faster but potentially lower quality)
+- **Quality**: Use `vac=True` for voice activity detection (requires torchaudio)
+
 ## Development Notes
 
 - Code origin: `simul_whisper/whisper/` is modified OpenAI Whisper, `whisper_streaming/` is refactored WhisperStreaming
