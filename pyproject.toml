@@ -1,0 +1,100 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simulstreaming"
+version = "0.1.0"
+description = "Whisper model for simultaneous speech translation and transcription using AlignAtt policy"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Charles University (CUNI)", email = "machacek@ufal.mff.cuni.cz"}
+]
+keywords = ["speech recognition", "translation", "simultaneous", "whisper", "asr"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "librosa",
+    "torchaudio",
+    "torch",
+    "tqdm",
+    "tiktoken",
+    "triton>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-timeout>=2.1",
+]
+
+[project.scripts]
+simulstreaming-whisper = "simulstreaming_whisper:main"
+simulstreaming-whisper-server = "simulstreaming_whisper_server:main"
+
+[project.urls]
+Homepage = "https://github.com/ufal/SimulStreaming"
+Repository = "https://github.com/ufal/SimulStreaming"
+Documentation = "https://github.com/ufal/SimulStreaming/blob/main/README.md"
+Issues = "https://github.com/ufal/SimulStreaming/issues"
+
+[tool.setuptools]
+packages = ["simul_whisper", "simul_whisper.whisper", "simul_whisper.whisper.normalizers", "whisper_streaming"]
+
+[tool.setuptools.package-data]
+"*" = ["*.pt"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
+    "--cov=simul_whisper",
+    "--cov=whisper_streaming",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "requires_model: marks tests that require downloading models",
+    "requires_cuda: marks tests that require CUDA",
+]
+timeout = 120
+
+[tool.coverage.run]
+source = ["simul_whisper", "whisper_streaming"]
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/whisper_streaming/whisper_server.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]

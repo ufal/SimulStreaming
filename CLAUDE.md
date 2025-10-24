@@ -24,6 +24,19 @@ The system can optionally cascade with EuroLLM machine translation using LocalAg
 
 ## Installation and Dependencies
 
+### Development Installation
+
+For development with testing:
+```bash
+pip install -e ".[dev]"
+```
+
+For regular installation:
+```bash
+pip install -e .
+```
+
+Or using requirements.txt:
 ```bash
 pip install -r requirements.txt
 ```
@@ -33,7 +46,12 @@ Dependencies:
 - **librosa**: Audio processing (WhisperStreaming)
 - **torchaudio**: Required for Silero VAD (`--vac` option). Can be removed for lighter installation if VAD not needed.
 - **tqdm, tiktoken**: From Whisper
-- **triton>=2.0.0**: Required by both Whisper and SimulWhisper (SimulWhisper requires <3)
+- **triton>=2.0.0**: Required by both Whisper and SimulWhisper
+
+Development dependencies (included in `[dev]`):
+- **pytest>=7.0**: Testing framework
+- **pytest-cov>=4.0**: Coverage reporting
+- **pytest-timeout>=2.1**: Test timeouts
 
 ## Usage Commands
 
@@ -143,9 +161,54 @@ Example:
 - Models: large-v2, large-v3 supported (translation and transcription)
 - CIF models: Separate per Whisper version, none available for large-v3
 
+## Testing
+
+### Running Tests
+
+Run all tests:
+```bash
+pytest
+```
+
+Run tests with coverage:
+```bash
+pytest --cov=simul_whisper --cov=whisper_streaming --cov-report=html
+```
+
+Run specific test file:
+```bash
+pytest tests/test_imports.py
+```
+
+Run tests excluding slow tests:
+```bash
+pytest -m "not slow"
+```
+
+Run tests excluding those requiring models:
+```bash
+pytest -m "not requires_model"
+```
+
+### Test Structure
+
+- `tests/test_imports.py`: Module import tests
+- `tests/test_config.py`: Configuration class tests
+- `tests/test_triton_fallback.py`: Triton ops fallback behavior
+- `tests/test_argument_parsing.py`: CLI argument parsing
+- `tests/test_base_classes.py`: Base class interface tests
+- `tests/test_token_buffer.py`: Token buffer functionality
+
+### Test Markers
+
+- `@pytest.mark.slow`: Slow tests (can be skipped)
+- `@pytest.mark.requires_model`: Tests requiring model download
+- `@pytest.mark.requires_cuda`: Tests requiring CUDA
+
 ## Development Notes
 
 - Code origin: `simul_whisper/whisper/` is modified OpenAI Whisper, `whisper_streaming/` is refactored WhisperStreaming
 - Logging: Use `--log-level DEBUG` for detailed debugging, especially useful with `--start_at` for specific audio segments
 - Testing VAC: VAC (`--vac`) requires torchaudio and improves quality by handling silence/speech boundaries
 - Translation cascade: Optional EuroLLM integration in `translate/` for speech-to-text-to-translation pipeline
+- **Rebasing**: When rebasing on upstream, preserve the following new files: `pyproject.toml`, `tests/`, `.gitignore`, `whisper_streaming/__init__.py`. Do not move or restructure existing upstream files.
