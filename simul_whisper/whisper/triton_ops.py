@@ -60,7 +60,8 @@ def median_kernel(filter_width: int):
         tl.store(y_ptr + offsets, MIDDLE_ROW_HERE, mask=mask)  # noqa: F821
 
     kernel = triton.JITFunction(kernel.fn)
-    kernel.src = kernel.src.replace(
+    src = kernel.src
+    src = src.replace(
         "    LOAD_ALL_ROWS_HERE",
         "\n".join(
             [
@@ -69,7 +70,7 @@ def median_kernel(filter_width: int):
             ]
         ),
     )
-    kernel.src = kernel.src.replace(
+    src = src.replace(
         "    BUBBLESORT_HERE",
         "\n\n".join(
             [
@@ -90,7 +91,10 @@ def median_kernel(filter_width: int):
             ]
         ),
     )
-    kernel.src = kernel.src.replace("MIDDLE_ROW_HERE", f"row{filter_width // 2}")
+    src = src.replace("MIDDLE_ROW_HERE", f"row{filter_width // 2}")
+
+    kernel._unsafe_update_src(src)
+    kernel.hash = None
 
     return kernel
 
