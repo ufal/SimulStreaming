@@ -93,8 +93,11 @@ def median_kernel(filter_width: int):
     )
     src = src.replace("MIDDLE_ROW_HERE", f"row{filter_width // 2}")
 
-    kernel._unsafe_update_src(src)
-    kernel.hash = None
+    if hasattr(kernel, "_unsafe_update_src") is True:
+        kernel._unsafe_update_src(src)
+        kernel.hash = None
+    else:
+        kernel.src = src
 
     return kernel
 
