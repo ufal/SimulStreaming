@@ -52,11 +52,10 @@ import soundfile
 # next client should be served by a new instance of this object
 class ServerProcessor:
 
-    def __init__(self, c, online_asr_proc, min_chunk, args):
+    def __init__(self, c, online_asr_proc, min_chunk):
         self.connection = c
         self.online_asr_proc = online_asr_proc
         self.min_chunk = min_chunk
-        self.args = args
 
         self.is_first = True
 
@@ -89,13 +88,8 @@ class ServerProcessor:
         #    - beg and end timestamp of the text segment, as estimated by Whisper model. The timestamps are not accurate, but they're useful anyway
         # - the next words: segment transcript
         if iteration_output:
-            text = iteration_output['text']
-
-            # Apply text cleaning if the flag is enabled
-            if self.args.clean_text:
-                text = clean_special_tokens(text)
-
-            message = "%1.0f %1.0f %s" % (iteration_output['start'] * 1000, iteration_output['end'] * 1000, text)
+            # Text is already cleaned at token level if --clean-text flag was set
+            message = "%1.0f %1.0f %s" % (iteration_output['start'] * 1000, iteration_output['end'] * 1000, iteration_output['text'])
             print(message, flush=True, file=sys.stderr)
             self.connection.send(message)
         else:
@@ -177,7 +171,7 @@ def main_server(factory, add_args):
             conn, addr = s.accept()
             logger.info('Connected to client on {}'.format(addr))
             connection = Connection(conn)
-            proc = ServerProcessor(connection, online, min_chunk, args)
+            proc = ServerProcessor(connection, online, min_chunk)
             proc.process()
             conn.close()
             logger.info('Connection to client closed')

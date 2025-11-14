@@ -64,8 +64,8 @@ def simul_asr_factory(args):
             decoder = "greedy"
         elif decoder not in ("beam","greedy"):
             raise ValueError("Invalid decoder type. Use 'beam' or 'greedy'.")
-        # else: it is greedy or beam, that's ok 
-    
+        # else: it is greedy or beam, that's ok
+
     a = { v:getattr(args, v) for v in ["model_path", "cif_ckpt_path", "frame_threshold", "audio_min_len", "audio_max_len", "beams", "task",
                                        "never_fire", 'init_prompt', 'static_init_prompt', 'max_context_tokens', "logdir"
                                        ]}
@@ -79,7 +79,10 @@ def simul_asr_factory(args):
         raise ValueError("audio_min_len must be smaller than audio_max_len")
     logger.info(f"Arguments: {a}")
     asr = SimulWhisperASR(**a)
-    return asr, SimulWhisperOnline(asr)
+
+    # Pass clean_text flag to online processor
+    clean_text = getattr(args, 'clean_text', False)
+    return asr, SimulWhisperOnline(asr, clean_text=clean_text)
 
 class SimulWhisperASR(ASRBase):
     
@@ -127,8 +130,9 @@ class SimulWhisperASR(ASRBase):
 
 class SimulWhisperOnline(OnlineProcessorInterface):
 
-    def __init__(self, asr):
+    def __init__(self, asr, clean_text=False):
         self.model = asr.model
+        self.clean_text = clean_text
         self.file = None
         self.init()
 
@@ -150,6 +154,44 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 
     def insert_audio_chunk(self, audio):
         self.audio_chunks.append(torch.from_numpy(audio))
+
+    def filter_special_tokens(self, tokens):
+        """Filter out ChatML special tokens from token list.
+
+        Removes:
+        - <|startoftranscript|>
+        - <|notimestamps|>
+        - <|endoftext|>
+        - <|transcribe|> / <|translate|>
+        - Language tokens like <|en|>
+        - Timestamp tokens >= timestamp_begin
+
+        Preserves actual text tokens including punctuation.
+        """
+        tokenizer = self.model.tokenizer
+
+        # Get special token IDs to filter
+        special_token_ids = {
+            tokenizer.sot,           # <|startoftranscript|>
+            tokenizer.no_timestamps, # <|notimestamps|>
+            tokenizer.eot,           # <|endoftext|>
+            tokenizer.transcribe,    # <|transcribe|>
+            tokenizer.translate,     # <|translate|>
+            tokenizer.no_speech,     # <|nospeech|>
+            tokenizer.sot_lm,        # <|startoflm|>
+            tokenizer.sot_prev,      # <|startofprev|>
+        }
+
+        # Add language tokens
+        special_token_ids.update(tokenizer.all_language_tokens)
+
+        # Filter out special tokens and timestamps
+        filtered = [
+            t for t in tokens
+            if t not in special_token_ids and t < tokenizer.timestamp_begin
+        ]
+
+        return filtered
 
     def timestamped_text(self, tokens, generation):
         if not generation:
@@ -219,9 +261,14 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 
         tokens = self.hide_incomplete_unicode(tokens)
 
-        # Use decode_with_timestamps to preserve all content including punctuation
-        # Special tokens will be filtered by clean_special_tokens if --clean-text flag is set
-        text = self.model.tokenizer.decode_with_timestamps(tokens)
+        # Filter special tokens at token ID level if clean_text is enabled
+        if self.clean_text:
+            tokens_for_decode = self.filter_special_tokens(tokens)
+            text = self.model.tokenizer.encoding.decode(tokens_for_decode)
+        else:
+            # Use decode_with_timestamps to preserve all content including special tokens
+            text = self.model.tokenizer.decode_with_timestamps(tokens)
+
         if len(text) == 0:
             return {}
         

@@ -11,32 +11,9 @@ import librosa
 from functools import lru_cache
 import time
 import logging
-import re
 
 
 logger = logging.getLogger(__name__)
-
-def clean_special_tokens(text):
-    """Remove ChatML special tokens and timestamp annotations from text.
-
-    Removes tokens like:
-    - <|startoftranscript|>
-    - <|notimestamps|>
-    - <|endoftext|>
-    - <|transcribe|>
-    - <|translate|>
-    - <|nospeech|>
-    - Language tokens like <|en|>
-    - Timestamp tokens like <|0.00|>, <|0.02|>
-    - Any other special tokens in <|...|> format
-
-    This preserves the actual transcribed text with punctuation.
-    """
-    # Remove all tokens in <|...|> format
-    cleaned_text = re.sub(r'<\|[^|]+\|>', '', text)
-    # Remove any extra whitespace that may have been left
-    cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
-    return cleaned_text
 
 class VADQuietFilter(logging.Filter):
     """Filter to hide VAD-related log messages when --quiet-vad is enabled."""
@@ -202,11 +179,7 @@ def main_simulation_from_file(factory, add_args=None):
             start_ts = iteration_output['start']
             end_ts = iteration_output['end']
             text = iteration_output['text']
-
-            # Apply text cleaning if the flag is enabled
-            if args.clean_text:
-                text = clean_special_tokens(text)
-
+            # Text is already cleaned at token level if --clean-text flag was set
             logger.debug(f"{now * 1000:.4f} {start_ts * 1000:.0f} {end_ts * 1000:.0f} {text}")
             print(f"{now * 1000:.4f} {start_ts * 1000:.0f} {end_ts * 1000:.0f} {text}", flush=True)
         else:
