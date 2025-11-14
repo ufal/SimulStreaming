@@ -15,6 +15,19 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+class VADQuietFilter(logging.Filter):
+    """Filter to hide VAD-related log messages when --quiet-vad is enabled."""
+    def filter(self, record):
+        message = record.getMessage()
+        # Filter out "no online update, only VAD. nonvoice" messages (case-insensitive)
+        message_lower = message.lower()
+        if "no online update, only vad" in message_lower:
+            return False
+        # Filter out "No text in this segment" messages (case-insensitive)
+        if "no text in this segment" in message_lower:
+            return False
+        return True
+
 @lru_cache(10**6)
 def load_audio(fname):
     a, _ = librosa.load(fname, sr=16000, dtype=np.float32)
@@ -50,6 +63,9 @@ def processor_args(parser):
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], 
                         help="Set the log level", default='DEBUG')
 
+    parser.add_argument("--quiet-vad", action="store_true", default=False,
+                        help="Hide VAD-related log messages (no online update, only VAD. nonvoice) and empty segment messages (No text in this segment)")
+
     parser.add_argument("--logdir", help="Directory to save audio segments and generated texts for debugging.",
                        default=None)
 
@@ -84,6 +100,12 @@ def set_logging(args,logger):
     logger.setLevel(args.log_level)
     logging.getLogger("simul_whisper").setLevel(args.log_level)
     logging.getLogger("whisper_streaming").setLevel(args.log_level)
+    
+    # Apply VAD quiet filter if requested
+    if args.quiet_vad:
+        vad_filter = VADQuietFilter()
+        for handler in logging.getLogger().handlers:
+            handler.addFilter(vad_filter)
 
 
 def simulation_args(parser):
