@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 # This code is retrieved from the original WhisperStreaming whisper_online.py .
-# It is refactored and simplified. Only the code that is needed for the 
-# SimulWhisper backend is kept. 
+# It is refactored and simplified. Only the code that is needed for the
+# SimulWhisper backend is kept.
 
 
 import sys
@@ -11,9 +11,29 @@ import librosa
 from functools import lru_cache
 import time
 import logging
+import re
 
 
 logger = logging.getLogger(__name__)
+
+def clean_special_tokens(text):
+    """Remove ChatML special tokens from text.
+
+    Removes tokens like:
+    - <|startoftranscript|>
+    - <|notimestamps|>
+    - <|endoftext|>
+    - <|transcribe|>
+    - <|translate|>
+    - <|nospeech|>
+    - Language tokens like <|en|>
+    - And other special tokens in <|...|> format
+    """
+    # Remove all tokens in <|...|> format
+    cleaned_text = re.sub(r'<\|[^|]+\|>', '', text)
+    # Remove any extra whitespace that may have been left
+    cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+    return cleaned_text
 
 class VADQuietFilter(logging.Filter):
     """Filter to hide VAD-related log messages when --quiet-vad is enabled."""
@@ -65,6 +85,9 @@ def processor_args(parser):
 
     parser.add_argument("--quiet-vad", action="store_true", default=False,
                         help="Hide VAD-related log messages (no online update, only VAD. nonvoice) and empty segment messages (No text in this segment)")
+
+    parser.add_argument("--clean-text", action="store_true", default=False,
+                        help="Remove ChatML special tokens (like <|startoftranscript|>, <|notimestamps|>, <|endoftext|>) from the output text")
 
     parser.add_argument("--logdir", help="Directory to save audio segments and generated texts for debugging.",
                        default=None)
@@ -176,6 +199,11 @@ def main_simulation_from_file(factory, add_args=None):
             start_ts = iteration_output['start']
             end_ts = iteration_output['end']
             text = iteration_output['text']
+
+            # Apply text cleaning if the flag is enabled
+            if args.clean_text:
+                text = clean_special_tokens(text)
+
             logger.debug(f"{now * 1000:.4f} {start_ts * 1000:.0f} {end_ts * 1000:.0f} {text}")
             print(f"{now * 1000:.4f} {start_ts * 1000:.0f} {end_ts * 1000:.0f} {text}", flush=True)
         else:
