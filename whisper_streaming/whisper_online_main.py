@@ -17,7 +17,7 @@ import re
 logger = logging.getLogger(__name__)
 
 def clean_special_tokens(text):
-    """Remove ChatML special tokens from text.
+    """Remove ChatML special tokens and timestamp annotations from text.
 
     Removes tokens like:
     - <|startoftranscript|>
@@ -27,7 +27,10 @@ def clean_special_tokens(text):
     - <|translate|>
     - <|nospeech|>
     - Language tokens like <|en|>
-    - And other special tokens in <|...|> format
+    - Timestamp tokens like <|0.00|>, <|0.02|>
+    - Any other special tokens in <|...|> format
+
+    This preserves the actual transcribed text with punctuation.
     """
     # Remove all tokens in <|...|> format
     cleaned_text = re.sub(r'<\|[^|]+\|>', '', text)

@@ -219,7 +219,9 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 
         tokens = self.hide_incomplete_unicode(tokens)
 
-        text = self.model.tokenizer.decode(tokens)
+        # Use decode_with_timestamps to preserve all content including punctuation
+        # Special tokens will be filtered by clean_special_tokens if --clean-text flag is set
+        text = self.model.tokenizer.decode_with_timestamps(tokens)
         if len(text) == 0:
             return {}
         
