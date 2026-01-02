@@ -9,9 +9,6 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-SAMPLING_RATE = 16000
-
-
 ######### Server objects
 
 import whisper_streaming.line_packet as line_packet
@@ -56,30 +53,34 @@ class ServerProcessor:
         self.connection = c
         self.online_asr_proc = online_asr_proc
         self.min_chunk = min_chunk
+        self.SAMPLING_RATE = self.online_asr_proc.audio_sample_rate
 
         self.is_first = True
 
     def receive_audio_chunk(self):
-        # receive all audio that is available by this time
-        # blocks operation if less than self.min_chunk seconds is available
-        # unblocks if connection is closed or a chunk is available
-        out = []
-        minlimit = self.min_chunk*SAMPLING_RATE
-        while sum(len(x) for x in out) < minlimit:
-            raw_bytes = self.connection.non_blocking_receive_audio()
-            if not raw_bytes:
+        needed = self.online_asr_proc.expected_samples
+        buf = bytearray()
+
+        while len(buf) < needed * 2:
+            raw = self.connection.non_blocking_receive_audio()
+            if not raw:
                 break
-#            print("received audio:",len(raw_bytes), "bytes", raw_bytes[:10])
-            sf = soundfile.SoundFile(io.BytesIO(raw_bytes), channels=1,endian="LITTLE",samplerate=SAMPLING_RATE, subtype="PCM_16",format="RAW")
-            audio, _ = librosa.load(sf,sr=SAMPLING_RATE,dtype=np.float32)
-            out.append(audio)
-        if not out:
+            buf.extend(raw)
+
+        if len(buf) < needed * 2:
             return None
-        conc = np.concatenate(out)
-        if self.is_first and len(conc) < minlimit:
-            return None
-        self.is_first = False
-        return np.concatenate(out)
+
+        sf = soundfile.SoundFile(
+            io.BytesIO(buf[: needed * 2]),
+            channels=1,
+            endian="LITTLE",
+            samplerate=self.SAMPLING_RATE,
+            subtype="PCM_16",
+            format="RAW",
+        )
+        audio, _ = librosa.load(sf, sr=self.SAMPLING_RATE, dtype=np.float32)
+
+        return audio
 
     def send_result(self, iteration_output):
         # output format in stdout is like:
