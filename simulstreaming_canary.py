@@ -167,7 +167,7 @@ class SimulCanaryASR:
         features_frame2audio_samples = make_divisible_by(
             int(self.audio_sample_rate * self.feature_stride_sec), factor=self.encoder_subsampling_factor
         )
-        encoder_frame2audio_samples = features_frame2audio_samples * self.encoder_subsampling_factor
+        self.encoder_frame2audio_samples = features_frame2audio_samples * self.encoder_subsampling_factor
         
         self.context_encoder_frames = ContextSize(
             left=int(self.cfg.left_context_secs * features_per_sec / self.encoder_subsampling_factor),
@@ -176,9 +176,9 @@ class SimulCanaryASR:
         )
 
         self.context_samples = ContextSize(
-            left=self.context_encoder_frames.left * encoder_frame2audio_samples,
-            chunk=self.context_encoder_frames.chunk * encoder_frame2audio_samples,
-            right=self.context_encoder_frames.right * encoder_frame2audio_samples,
+            left=self.context_encoder_frames.left * self.encoder_frame2audio_samples,
+            chunk=self.context_encoder_frames.chunk * self.encoder_frame2audio_samples,
+            right=self.context_encoder_frames.right * self.encoder_frame2audio_samples,
         )
 
         # decoding computer
@@ -202,6 +202,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         self.device = asr.device
         self.expected_samples = asr.context_samples.chunk + asr.context_samples.right
         self.audio_sample_rate = asr.audio_sample_rate
+        self.end_of_window_sample = asr.context_samples.chunk
         self._init_stream_state()
 
     def init(self):
@@ -268,7 +269,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
 
         self.model_state.is_last_chunk_batch = is_last_chunk_batch
 
-        with torch.no_grad():
+        with torch.inference_mode():
              # get encoder output using full buffer [left-chunk-right]
             _, encoded_len, enc_states, _ = self.model(
                 input_signal=self.buffer.samples,
@@ -290,8 +291,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
 
             self.model_state.prev_encoder_shift = max(
                 0,
-                (self.buffer.context_size_batch.left + self.buffer.context_size_batch.chunk)
-                // (self.asr.encoder_subsampling_factor * max(1, int(self.audio_sample_rate * self.asr.feature_stride_sec)))
+                (self.end_of_window_sample // self.asr.encoder_frame2audio_samples)
                 - self.asr.context_encoder_frames.left
                 - self.asr.context_encoder_frames.chunk,
             )
@@ -308,12 +308,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
             self.expected_samples -= self.asr.context_samples.right
 
         # extract predicted tokens for this single stream
-        dec_prefix_len = self.model_state.decoder_input_ids.size(-1)
-        cur_len = int(self.model_state.current_context_lengths[0].item())
-        if cur_len <= dec_prefix_len:
-            return {}
-
-        pred_ids = self.model_state.pred_tokens_ids[0, dec_prefix_len:cur_len]
+        pred_ids = self.model_state.pred_tokens_ids[0, self.model_state.decoder_input_ids.size(-1):self.model_state.current_context_lengths[0]]
         token_list = pred_ids.tolist()
         text = self.model.tokenizer.ids_to_text(token_list).strip()
 
@@ -331,7 +326,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         }
 
     def finish(self):
-        """Signal end-of-stream and return final output."""
+        logger.info("Finish")
         self.is_last = True
         o = self.process_iter()
 
