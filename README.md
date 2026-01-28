@@ -47,7 +47,7 @@ Follow [translate/README.txt](translate/README.txt).
 
 
 ```
-usage: simulstreaming_whisper.py [-h] [--min-chunk-size MIN_CHUNK_SIZE] [--lan LAN] [--task {transcribe,translate}] [--vac] [--vac-chunk-size VAC_CHUNK_SIZE] [--vad]
+usage: simulstreaming_whisper.py [-h] [--min-chunk-size MIN_CHUNK_SIZE] [--lan LAN] [--task {transcribe,translate}] [--vac] [--vac-chunk-size VAC_CHUNK_SIZE]
                                  [-l {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--model_path MODEL_PATH] [--beams BEAMS] [--decoder DECODER] [--audio_max_len AUDIO_MAX_LEN]
                                  [--audio_min_len AUDIO_MIN_LEN] [--frame_threshold FRAME_THRESHOLD] [--cif_ckpt_path CIF_CKPT_PATH] [--never_fire | --no-never_fire]
                                  [--init_prompt INIT_PROMPT] [--static_init_prompt STATIC_INIT_PROMPT] [--max_context_tokens MAX_CONTEXT_TOKENS] [--start_at START_AT] [--comp_unaware]
@@ -69,7 +69,6 @@ WhisperStreaming processor arguments (shared for simulation from file and for th
   --vac                 Use VAC = voice activity controller. Recommended. Requires torch.
   --vac-chunk-size VAC_CHUNK_SIZE
                         VAC sample size in seconds.
-  --vad                 Use VAD = voice activity detection, with the default parameters.
 
 Whisper arguments:
   --model_path MODEL_PATH
@@ -180,35 +179,15 @@ improving our research and the tool itself. Your experience as a user is
 invaluable to us --- it can help to shape upcoming features, licensing models, and support services. 
 
 To better understand your needs and guide the future of
-SimulStreaming, we kindly ask you to fill out this **[questionnaire](https://forms.cloud.microsoft/e/7tCxb4gJfB).**
+SimulStreaming, we kindly ask the users, especially commercial, to fill out this **[questionnaire](https://forms.cloud.microsoft/e/7tCxb4gJfB).**
 
+## 📄 Licence
 
-## 📄 Licence and Contributions
+Now under MIT.
 
-SimulStreaming is dual-licensed:
-
-### 🔹 Non-Commercial Use
-
-You may use SimulStreaming under the **PolyForm Noncommercial License 1.0.0** if you
-obtain the code through the GitHub repository.  This license is **free of charge**
-and comes with **no obligations** for non-commercial users.
-
-### 🔸 Commercial Use
-
-Understanding who uses SimulStreaming commercially helps us improve and
-prioritize development. Therefore, we want to **require registration** of those who acquire a commercial licence.
-
-We plan to make the commercial licenceses **affordable** to SMEs and individuals. We
-are considering to provide commercial licenses either for free or for symbolic
-one-time fee, and maybe also provide additional support. You can share your preference via the [questionnaire](https://forms.cloud.microsoft/e/7tCxb4gJfB).
-
-You can also leave your contact [there](https://forms.cloud.microsoft/e/7tCxb4gJfB) to be notified when the commercial licenses become
-available.
-
-### 🤝 Contributions
+## 🤝 Contributions
 
 Contributions to SimulStreaming are welcome. 
-Before a pull request will be merged, contributors will be kindly asked to agree to the dual licensing terms of SimulStreaming. 
 
 ## ✉️ Contact
 

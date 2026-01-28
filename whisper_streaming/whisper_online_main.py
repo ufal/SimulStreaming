@@ -45,8 +45,6 @@ def processor_args(parser):
                         help='Use VAC = voice activity controller. Recommended. Requires torch.')
     group.add_argument('--vac-chunk-size', type=float, default=0.04, 
                         help='VAC sample size in seconds.')
-    group.add_argument('--vad', action="store_true", default=False, 
-                        help='Use VAD = voice activity detection, with the default parameters.')
 
     parser.add_argument("-l", "--log-level", dest="log_level", 
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], 
@@ -142,7 +140,7 @@ def main_simulation_from_file(factory, add_args=None):
     beg = args.start_at
     start = time.time()-beg
 
-    def output_transcript(o, now=None):
+    def output_transcript(iteration_output, now=None):
         # output format in stdout is like:
         # 4186.3606 0 1720 Takhle to je
         # - the first three words are:
@@ -152,11 +150,15 @@ def main_simulation_from_file(factory, add_args=None):
         if now is None:
             now = time.time() - start
 
-        start_ts, end_ts, text = o
-        if start_ts is not None and end_ts is not None:
+        if iteration_output:
+            start_ts = iteration_output['start']
+            end_ts = iteration_output['end']
+            text = iteration_output['text']
             logger.debug(f"{now * 1000:.4f} {start_ts * 1000:.0f} {end_ts * 1000:.0f} {text}")
             print(f"{now * 1000:.4f} {start_ts * 1000:.0f} {end_ts * 1000:.0f} {text}", flush=True)
-            
+        else:
+            logger.debug("No text in this segment")
+
     if args.offline: ## offline mode processing (for testing/debugging)
         a = load_audio(audio_path)
         online.insert_audio_chunk(a)
