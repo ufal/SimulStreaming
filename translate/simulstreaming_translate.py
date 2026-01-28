@@ -3,6 +3,7 @@ import os
 import ctranslate2
 import sentencepiece as spm
 import transformers
+import json
 
 def generate_words(sp, step_results):
     tokens_buffer = []
@@ -311,6 +312,7 @@ class SimulLLM:
         print("RET:",ret,file=sys.stderr)
         return ret
 
+    # this is computationally aware version.
     def process_iter_aware(self):
         if self.buffer.len_src() + len(self.last_inserted) < self.min_len:
             return ("COMPLETE", "", "")
@@ -499,18 +501,18 @@ def simul_translator_factory(args):
                     )
     return simul
 
-def yield_input_line(line):
-    ts, beg, end, *_ = line.split()
-    text = line[len(ts)+len(beg)+len(end)+3:]
-    ts = float(ts)
-    # in rare cases, the first word is a suffix of the previous word, that was split to multiple parts
-    if text[0] != " ":
-        first, *words = text.split()
-        yield (ts, beg, end, " "+first)  # marking the first word with " ", so that it can be later detected and inserted as suffix
-    else:
-        words = text.split()
-    for w in words:
-        yield (ts, beg, end, w)
+#def yield_input_line(line):
+#    ts, beg, end, *_ = line.split()
+#    text = line[len(ts)+len(beg)+len(end)+3:]
+#    ts = float(ts)
+#    # in rare cases, the first word is a suffix of the previous word, that was split to multiple parts
+#    if text[0] != " ":
+#        first, *words = text.split()
+#        yield (ts, beg, end, " "+first)  # marking the first word with " ", so that it can be later detected and inserted as suffix
+#    else:
+#        words = text.split()
+#    for w in words:
+#        yield (ts, beg, end, w)
 
 def main_simulation_from_file():
     import argparse
@@ -527,7 +529,6 @@ def main_simulation_from_file():
     # two input options
     if args.input_instance is not None:
         print("INFO: Reading input from file", args.input_instance, file=sys.stderr)
-        import json
         with open(args.input_instance, "r") as f:
             instance = json.load(f)
 
@@ -537,27 +538,46 @@ def main_simulation_from_file():
 
         yield_ts_words = zip(timestamps, timestamps, elapsed, asr_source.split())
     else:
-        print("INFO: Reading stdin in txt format", file=sys.stderr)
+        print("INFO: Reading stdin in jsonl format", file=sys.stderr)
         def yield_input():
             for line in sys.stdin:
                 line = line.strip()
-                for w in yield_input_line(line):
-                    yield w
+                yield json.loads(line)
 
         yield_ts_words = yield_input()
+    was_final = False
+    for row in yield_ts_words:
+        if "text" not in row and row["is_final"]:
+            if is_final:
+                out = list(simul.finish())[0]
+                simul.init()
+                if out:
+                    print(t,b,e,out,flush=True)
+        else:
+            words = row["text"].split()
+            t = row["emission_time"]
+            b = row["start"]
+            e = row["end"]
+            is_final = row["is_final"]
+            if was_final:
+                was_final = False
+            else:
+                if not row["text"].startswith(" "):
+                    simul.insert_suffix(words[0])
+                    words = words[1:]
+            simul.insert(words)
+            out = simul.process_iter()
+            if out:
+                print(t,b,e,out,flush=True)
+            if is_final:
+                out = list(simul.finish())[0]
+                simul.init()
+                if out:
+                    print(t,b,e,out,flush=True)
+        was_final = is_final
+#    out = simul.finish()
+#    if out:
+#        print(t,b,e,out,flush=True)
 
-    #i = 0
-    for t,b,e,w in yield_ts_words:
-        if w.startswith(" "):  # it is suffix of the previous word
-            w = w[1:] 
-            simul.insert_suffix(w)
-            continue
-        simul.insert(w)
-        out = simul.process_iter()
-        if out:
-            print(t,b,e,out,flush=True)
-        # if i > 50:
-        #     break
-    #    i += 1
-    out = simul.finalize()
-    print(t,b,e,out,flush=True)
+if __name__ == "__main__":
+    main_simulation_from_file()
