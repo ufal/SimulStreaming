@@ -99,6 +99,7 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
         elif self.current_online_chunk_buffer_size > self.SAMPLING_RATE*self.online_chunk_size:
             self.current_online_chunk_buffer_size = 0
             ret = self.online.process_iter()
+            ret["is_final"] = False
             return ret
         else:
             logger.info(f"no online update, only VAD. {self.status}")
@@ -108,4 +109,5 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
         ret = self.online.finish()
         self.current_online_chunk_buffer_size = 0
         self.is_currently_final = False
+        ret["is_final"] = True
         return ret

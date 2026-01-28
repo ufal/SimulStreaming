@@ -132,7 +132,6 @@ def main_server(factory, add_args):
     parser.add_argument("--warmup-file", type=str, dest="warmup_file", 
             help="The path to a speech audio wav file to warm up Whisper so that the very first chunk processing is fast. It can be e.g. "
             "https://github.com/ggerganov/whisper.cpp/raw/master/samples/jfk.wav .")
-    parser.add_argument("--out-txt", action="store_true")
 
     # options from whisper_online
     processor_args(parser)

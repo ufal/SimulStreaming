@@ -11,6 +11,7 @@ import librosa
 from functools import lru_cache
 import time
 import logging
+import json
 
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,8 @@ def processor_args(parser):
 
     parser.add_argument("--logdir", help="Directory to save audio segments and generated texts for debugging.",
                        default=None)
+    parser.add_argument("--out-txt", action="store_true", help="Output formatted as not as jsonl but simple space-separated text: beg, end, text", 
+                        default=False)
 
 def asr_factory(args, factory=None):
     """
@@ -140,7 +143,7 @@ def main_simulation_from_file(factory, add_args=None):
     beg = args.start_at
     start = time.time()-beg
 
-    def output_transcript(iteration_output, now=None):
+    def output_txt_transcript(iteration_output, now=None):
         # output format in stdout is like:
         # 4186.3606 0 1720 Takhle to je
         # - the first three words are:
@@ -158,6 +161,22 @@ def main_simulation_from_file(factory, add_args=None):
             print(f"{now * 1000:.4f} {start_ts * 1000:.0f} {end_ts * 1000:.0f} {text}", flush=True)
         else:
             logger.debug("No text in this segment")
+
+    def output_json_transcript(iteration_output, now=None):
+        if now is None:
+            now = time.time() - start
+        if iteration_output:
+            iteration_output['emission_time'] = now
+            jline = json.dumps(iteration_output)
+            logger.debug(jline)
+            print(jline, flush=True)
+        else:
+            logger.debug("No text in this segment")
+
+    if args.out_txt:
+        output_transcript = output_txt_transcript
+    else:
+        output_transcript = output_json_transcript
 
     if args.offline: ## offline mode processing (for testing/debugging)
         a = load_audio(audio_path)
