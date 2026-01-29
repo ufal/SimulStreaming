@@ -4,6 +4,7 @@ import ctranslate2
 import sentencepiece as spm
 import transformers
 import json
+import time
 
 def generate_words(sp, step_results):
     tokens_buffer = []
@@ -31,7 +32,6 @@ class LLMTranslator:
     def __init__(self, system_prompt='Please translate.', max_context_length=4096, len_ratio=None, model_dir="ct2_EuroLLM-9B-Instruct/", tokenizer_dir="EuroLLM-9B-Instruct/"):
         self.system_prompt = system_prompt
 
-
         print("Loading the model...", file=sys.stderr)
         self.generator = ctranslate2.Generator(model_dir, device="cuda")
         self.sp = spm.SentencePieceProcessor(os.path.join(tokenizer_dir,"tokenizer.model"))
@@ -46,26 +46,19 @@ class LLMTranslator:
         # my regex sentence segmenter
         self.segmenter = SentenceSegmenter()
 
-#        self.max_generation_length = 512
-#        self.max_prompt_length = context_length - max_generation_length
-
     def start_dialog(self):
         return [{'role':'system', 'content': self.system_prompt }]
-    
 
     def build_prompt(self, dialog):
         toks = self.tokenizer.apply_chat_template(dialog, tokenize=True, add_generation_prompt=False)
         if len(dialog) == 3:
             toks = toks[:-2]
         print("len toks:", len(toks), file=sys.stderr)
-#        print(toks, file=sys.stderr)
 
         c = self.tokenizer.convert_ids_to_tokens(toks)
-#        print(c,file=sys.stderr)
         return c
 
     def translate(self, src, tgt_forced=""):
-        #src, tgt_forced = self.trim(src, tgt_forced)
 
         dialog = self.start_dialog()
         dialog += [{'role':'user','content': src}]
@@ -81,31 +74,13 @@ class LLMTranslator:
         step_results = self.generator.generate_tokens(
             prompt_tokens,
             **limit_kw, 
-    #    end_token=tokenizer.eos_token,
-    #            sampling_temperature=0.6,
-    #            sampling_topk=20,
-    #            sampling_topp=1,
         )
 
         res = []
-        #output_ids = []
         for step_result in step_results:
-        #    is_new_word = step_result.token.startswith("▁")
-        #    if is_new_word and output_ids:
-        #        word = self.sp.decode(output_ids)
-#                print(word, end=" ", flush=True, file=sys.stderr)
-        #        output_ids = []
-        #    output_ids.append(step_result.token_id)
             res.append(step_result)
 
-        #if output_ids:
-        #    word = self.sp.decode(output_ids)
-#        print(word, file=sys.stderr)
-
         return self.sp.decode([r.token_id for r in res])
- #       print(res)
- #       print([s.token for s in res], file=sys.stderr)
-#        print([s.token==self.tokenizer.eos_token for s in res], file=sys.stderr)
 
 class ParallelTextBuffer:
     def __init__(self, tokenizer, max_tokens, trimming="segments", init_src="", init_tgt=""):
@@ -138,15 +113,12 @@ class ParallelTextBuffer:
             self.src_buffer.append([s])
 
     def trim_sentences(self):
-        # src_tok_lens = [len(self.tokenizer.encode(" ".join(b))) for b in self.src_buffer]
-        # tgt_tok_lens = [len(self.tokenizer.encode(t)) for t in self.tgt_buffer]
 
         src = " ".join(" ".join(b) for b in self.src_buffer)
         tgt = "".join(self.tgt_buffer)
 
         src_sp_toks = self.tokenizer.encode(src)
         tgt_sp_toks = self.tokenizer.encode(tgt)
-
 
 
         def trim_sentence(text):
@@ -206,7 +178,6 @@ class ParallelTextBuffer:
         return self.trim_segments()
 
 
-
 class SimulLLM:
 
     def __init__(self, llmtrans, min_len=0, chunk=1, trimming="sentences", language="ja", init_src="", init_tgt=""):
@@ -228,9 +199,6 @@ class SimulLLM:
         self.init()
 
     def init(self):
-        #self.src_buffer = init_src 
-        #self.confirmed_tgt = init_tgt
-
         self.buffer = ParallelTextBuffer(self.llmtranslator.tokenizer, self.llmtranslator.max_tokens_to_trim, trimming=self.trimming, init_src=self.init_src, init_tgt=self.init_tgt)
 
         self.last_inserted = []
@@ -270,69 +238,30 @@ class SimulLLM:
         else:
             return " ".join(a[:i]), " ".join(b[i:])
 
-    def process_iter(self):
-        if self.buffer.len_src() + len(self.last_inserted) < self.min_len:
-            return ""
-
-        src, forced_tgt = self.buffer.trim() #llmtranslator.trim(" ".join(self.src_buffer), self.confirmed_tgt)
-        #self.src_buffer = self.src_buffer.split()
-        #src = " ".join(self.src_buffer)
-
-        confirmed_out = ""
-        run = False
-        for i in range(self.step, len(self.last_inserted), self.step):
-            for w in self.last_inserted[i-self.step:i]:
-                src += " " + w
-                run = True
-            if not run: break
-            
-            print("SRC",src,file=sys.stderr)
-
-            print("FORCED TGT",forced_tgt,file=sys.stderr)
-            out = self.llmtranslator.translate(src, forced_tgt)
-            print("OUT",out,file=sys.stderr)
-            confirmed, unconfirmed = self.trim_longest_common_prefix(self.last_unconfirmed, out)
-            self.last_unconfirmed = unconfirmed
-            #print("tady", (self.confirmed_tgt, self.specific_space, confirmed), file=sys.stderr)
-            if confirmed:
-#                self.confirmed_tgt += self.specific_space + confirmed
-#            print(confirmed_out, confirmed, file=sys.stderr)
-                confirmed_out += self.specific_space + confirmed
-            print("CONFIRMED NOW:",confirmed,file=sys.stderr)
-
-
-            print(file=sys.stderr)
-            print(file=sys.stderr)
-        print("#################",file=sys.stderr)
-        if run:
-            self.buffer.insert(self.last_inserted, confirmed_out)
-            self.last_inserted = []
-
-        ret = confirmed_out
-        print("RET:",ret,file=sys.stderr)
-        return ret
-
-    # this is computationally aware version.
-    def process_iter_aware(self):
-        if self.buffer.len_src() + len(self.last_inserted) < self.min_len:
+    def process_iter(self, is_final=False):
+        print("IS FINAL:", is_final, file=sys.stderr)
+        if not is_final and self.buffer.len_src() + len(self.last_inserted) < self.min_len:
             return ("COMPLETE", "", "")
 
-        src, forced_tgt = self.buffer.trim() #llmtranslator.trim(" ".join(self.src_buffer), self.confirmed_tgt)
-        #self.src_buffer = self.src_buffer.split()
-        #src = " ".join(self.src_buffer)
+        src, forced_tgt = self.buffer.trim()
 
         confirmed_out = ""
         run = False
         for i in range(2):
             if i == 0:
+                # first, catch up all but the last chunk.
                 w = self.last_inserted[:-self.step]
+                if not w:
+                    continue
             else:
                 w = self.last_inserted[-self.step:]
+                if len(w) < self.step and not is_final:
+                    # do not process the last incomplete chunk, wait for more input
+                    # (unless it's final)
+                    continue
             if w:
                 src += " " + " ".join(w)
                 run = True
-            else:
-                break
             
             print("SRC",src,file=sys.stderr)
 
@@ -341,10 +270,7 @@ class SimulLLM:
             print("OUT",out,file=sys.stderr)
             confirmed, unconfirmed = self.trim_longest_common_prefix(self.last_unconfirmed, out)
             self.last_unconfirmed = unconfirmed
-            #print("tady", (self.confirmed_tgt, self.specific_space, confirmed), file=sys.stderr)
             if confirmed:
-#                self.confirmed_tgt += self.specific_space + confirmed
-#            print(confirmed_out, confirmed, file=sys.stderr)
                 confirmed_out += self.specific_space + confirmed
             print("CONFIRMED NOW:",confirmed,file=sys.stderr)
             yield ("INCOMPLETE", confirmed_out, unconfirmed)
@@ -360,9 +286,9 @@ class SimulLLM:
         print("RET:",ret,file=sys.stderr)
         yield ("COMPLETE", ret, self.last_unconfirmed)
 
-
     def finish(self):
-        yield ("COMPLETE", "", self.last_unconfirmed)
+        # assume you always going to refresh after finish
+        yield ("COMPLETE", self.last_unconfirmed, "")
 
 ### default prompts
 
@@ -418,7 +344,7 @@ def translate_args(parser):
 
     # maybe later
     #parser.add_argument('--offline', action="store_true", default=False, help='Offline mode.')
-    #parser.add_argument('--comp_unaware', action="store_true", default=False, help='Computationally unaware simulation.')
+    parser.add_argument('--comp_unaware', action="store_true", default=False, help='Computationally unaware simulation.')
 
     parser.add_argument('--lan', '--language', type=str, default="de", 
                         help="Target language code.",
@@ -501,18 +427,50 @@ def simul_translator_factory(args):
                     )
     return simul
 
-#def yield_input_line(line):
-#    ts, beg, end, *_ = line.split()
-#    text = line[len(ts)+len(beg)+len(end)+3:]
-#    ts = float(ts)
-#    # in rare cases, the first word is a suffix of the previous word, that was split to multiple parts
-#    if text[0] != " ":
-#        first, *words = text.split()
-#        yield (ts, beg, end, " "+first)  # marking the first word with " ", so that it can be later detected and inserted as suffix
-#    else:
-#        words = text.split()
-#    for w in words:
-#        yield (ts, beg, end, w)
+
+class SimulationTimer:
+    def __init__(self, comp_aware=True):
+        self.beg_time = time.time()
+        self.comp_aware = comp_aware
+
+    def now(self, emission_time=None):
+        if self.comp_aware:
+            return time.time() - self.beg_time
+        else:
+            return emission_time
+
+def format_outputs(out_seq, in_row, timer, is_final=False):
+    for status, confirmed, unconfirmed in out_seq:
+        #if status == "INCOMPLETE": continue
+        r = {
+            "emission_time": timer.now(in_row["emission_time"]),
+            "end": in_row.get("end",None),
+            "status": status,
+            "text": confirmed,
+            "unconfirmed_text": unconfirmed,
+            "is_final": is_final
+        }
+        yield r
+
+def handle_outputs(out_seq, in_row, timer, is_final=False):
+    for r in format_outputs(out_seq, in_row, timer, is_final=is_final):
+        print(json.dumps(r), flush=True)
+
+def simulation_update(simul, row, timer, out_handler=handle_outputs):
+    print("INPUT:", row["text"], file=sys.stderr)
+    if "text" in row:
+        words = row["text"].split()
+        if not row["text"].startswith(" "):
+            simul.insert_suffix(words[0])
+            words = words[1:]
+        simul.insert(words)
+        out = simul.process_iter(is_final=row["is_final"])
+        out_handler(out, row, timer)
+    if row["is_final"]:
+        out = simul.finish()
+        out_handler(out, row, timer, is_final=True)
+        simul.init()
+
 
 def main_simulation_from_file():
     import argparse
@@ -528,56 +486,26 @@ def main_simulation_from_file():
 
     # two input options
     if args.input_instance is not None:
-        print("INFO: Reading input from file", args.input_instance, file=sys.stderr)
-        with open(args.input_instance, "r") as f:
-            instance = json.load(f)
-
-        asr_source = instance["prediction"]
-        timestamps = instance["delays"]
-        elapsed = instance["elapsed"]
-
-        yield_ts_words = zip(timestamps, timestamps, elapsed, asr_source.split())
+        raise NotImplementedError("input_instance is not implemented")
+#        print("INFO: Reading input from file", args.input_instance, file=sys.stderr)
+#        with open(args.input_instance, "r") as f:
+#            instance = json.load(f)
+#
+#        asr_source = instance["prediction"]
+#        timestamps = instance["delays"]
+#        elapsed = instance["elapsed"]
+#
+#        yield_ts_words = zip(timestamps, timestamps, elapsed, asr_source.split())
     else:
         print("INFO: Reading stdin in jsonl format", file=sys.stderr)
         def yield_input():
             for line in sys.stdin:
-                line = line.strip()
                 yield json.loads(line)
-
         yield_ts_words = yield_input()
-    was_final = False
+
+    timer = SimulationTimer(comp_aware=not args.comp_unaware)
     for row in yield_ts_words:
-        if "text" not in row and row["is_final"]:
-            if is_final:
-                out = list(simul.finish())[0]
-                simul.init()
-                if out:
-                    print(t,b,e,out,flush=True)
-        else:
-            words = row["text"].split()
-            t = row["emission_time"]
-            b = row["start"]
-            e = row["end"]
-            is_final = row["is_final"]
-            if was_final:
-                was_final = False
-            else:
-                if not row["text"].startswith(" "):
-                    simul.insert_suffix(words[0])
-                    words = words[1:]
-            simul.insert(words)
-            out = simul.process_iter()
-            if out:
-                print(t,b,e,out,flush=True)
-            if is_final:
-                out = list(simul.finish())[0]
-                simul.init()
-                if out:
-                    print(t,b,e,out,flush=True)
-        was_final = is_final
-#    out = simul.finish()
-#    if out:
-#        print(t,b,e,out,flush=True)
+        simulation_update(simul, row, timer)
 
 if __name__ == "__main__":
     main_simulation_from_file()
