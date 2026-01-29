@@ -420,7 +420,8 @@ def translate_args(parser):
                         help="Set the log level", default='DEBUG')
 
 def simulation_args(parser):
-    parser.add_argument('--input-instance', type=str, default=None, help="Filename of instances to simulate input. If not set, txt input is read from stdin.")
+    #parser.add_argument('--input-instance', type=str, default=None, help="Filename of instances to simulate input. If not set, txt input is read from stdin.")
+    parser.add_argument('--input-jsonl', type=str, default=None, help="Filename of jsonl file to simulate input. If not set, it is read from stdin.")
     #parser.add_argument('--output_instance', type=str, default=None, help="Write output as instance into this file, while also writing to stdout.")
     # maybe later
     #parser.add_argument('--offline', action="store_true", default=False, help='Offline mode.')
@@ -515,7 +516,7 @@ def simulation_update(simul, rows, timer, out_handler=handle_outputs):
     # TODO: experiment whether it's wise. It may accumulate delay in the worst case. 
     inserted = False
     for row in rows:
-        if "text" in row:
+        if "text" in row and row["text"] != "":
             print("INPUT:", row["text"], file=sys.stderr)
             words = row["text"].split()
             if not row["text"].startswith(" "):
@@ -544,46 +545,62 @@ def main_simulation_from_file():
 
     args = parser.parse_args()
 
+    if not args.comp_unaware and args.input_jsonl is None:
+        print(f"ERROR: Reading stdin in computationally aware simulation does not work. Loading the model breaks timing. Use --input-jsonl instead.", file=sys.stderr)
+        sys.exit(1)
+
+
     simul = simul_translator_factory(args)
 
-
-    # two input options
-    if args.input_instance is not None:
-        raise NotImplementedError("input_instance is not implemented")
-#        print("INFO: Reading input from file", args.input_instance, file=sys.stderr)
-#        with open(args.input_instance, "r") as f:
-#            instance = json.load(f)
-#
-#        asr_source = instance["prediction"]
-#        timestamps = instance["delays"]
-#        elapsed = instance["elapsed"]
-#
-#        yield_ts_words = zip(timestamps, timestamps, elapsed, asr_source.split())
-
-    # Only jsonl input works.
+    if args.input_jsonl is not None:
+        ifile = open(args.input_jsonl, "r")
+        inform_ifile = args.input_jsonl
+    else:
+        ifile = sys.stdin
+        inform_ifile = "stdin"
 
     un = "un" if args.comp_unaware else ""
-    print(f"INFO: Reading stdin in jsonl format, computationally {un}aware simulation.", file=sys.stderr)
+    print(f"INFO: Reading {inform_ifile} in jsonl format, computationally {un}aware simulation.", file=sys.stderr)
     timer = SimulationTimer(comp_aware=not args.comp_unaware)
     if args.comp_unaware:
-        for line in sys.stdin:
+        for line in ifile:
             row = json.loads(line)
             simulation_update(simul, [row], timer)
     else:
-        # compuationally aware simulation:
-        eos = False
-        while not eos:
-            rows = []
-            # Check if stdin has data available *right now*
-            while select.select([sys.stdin], [], [], 0)[0]:
-                line = sys.stdin.readline()
-                if not line:  # end of input stream
-                    eos = True
-                    break
-                rows.append(json.loads(line))
-            if rows:
-                simulation_update(simul, rows, timer)
+#            # compuationally aware simulation from stdin:
+#            eos = False
+#            while not eos:
+#                rows = []
+#                # Check if stdin has data available *right now*
+#                while select.select([sys.stdin], [], [], 0)[0]:
+#                    line = sys.stdin.readline()
+#                    if not line:  # end of input stream
+#                        eos = True
+#                        break
+#                    rows.append(json.loads(line))
+#                if rows:
+#                    simulation_update(simul, rows, timer)
 
+        # computationally aware simulation from file:
+        rows = []
+        for line in ifile:
+            row = json.loads(line)
+            # to allow cascading cascade, e.g. whisper->eurollm->eurollm:
+            if "status" in row and row["status"] == "INCOMPLETE":
+                continue
+            rows.append(row)
+            if timer.now() > row["emission_time"]:
+                continue
+            elif timer.now() <= row["emission_time"]:
+                while timer.now() < row["emission_time"]:
+                    time.sleep(0.01)
+            simulation_update(simul, rows, timer)
+            rows = []
+        if rows:
+            simulation_update(simul, rows, timer)
+
+    if args.input_jsonl is not None:
+        ifile.close()
 
 if __name__ == "__main__":
     main_simulation_from_file()
