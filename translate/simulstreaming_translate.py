@@ -5,6 +5,7 @@ import sentencepiece as spm
 import transformers
 import json
 import time
+import select
 
 def generate_words(sp, step_results):
     tokens_buffer = []
@@ -299,9 +300,47 @@ lan_to_name = {
     "zh-sim": "Chinese Simplified",
     "cs": "Czech",
     "hu": "Hungarian",
-    "en": "English"
-    # TODO: all EuroLLM languages
-    }
+    "en": "English",
+
+
+    # EuroLLM languages
+    # TODO: check, it's by ChatGPT.
+    "bg": "Bulgarian",
+    "hr": "Croatian",
+#    "cs": "Czech",
+    "da": "Danish",
+    "nl": "Dutch",
+#    "en": "English",
+    "et": "Estonian",
+    "fi": "Finnish",
+    "fr": "French",
+#    "de": "German",
+    "el": "Greek",
+#    "hu": "Hungarian",
+    "ga": "Irish",
+    "it": "Italian",
+    "lv": "Latvian",
+    "lt": "Lithuanian",
+    "mt": "Maltese",
+    "pl": "Polish",
+    "pt": "Portuguese",
+    "ro": "Romanian",
+    "sk": "Slovak",
+    "sl": "Slovenian",
+    "es": "Spanish",
+    "sv": "Swedish",
+    "ar": "Arabic",
+    "ca": "Catalan",
+#    "zh": "Chinese",
+    "gl": "Galician",
+    "hi": "Hindi",
+#    "ja": "Japanese",
+    "ko": "Korean",
+    "no": "Norwegian",
+    "ru": "Russian",
+    "tr": "Turkish",
+    "uk": "Ukrainian"
+}
 
 SrcLang = "English"  # TODO: default parameters.
 TgtLang = "German"
@@ -335,7 +374,9 @@ lan_thresholds = {
    # 'cs': I don't know    # guessed
 }
 
-lan_choices = list(lan_to_name.keys())
+from hovercraft import *
+
+lan_choices = sorted(set(list(lan_to_name.keys())+list(hovercraft_translations.keys())))
 
 def translate_args(parser):
     parser.add_argument('--min-chunk-size', type=int, default=1, 
@@ -395,12 +436,18 @@ def simul_translator_factory(args):
         sys_prompt = args.sys_prompt
 
     if args.init_prompt_src is None:
-        init_src = default_inits_tgt[args.src_lan].split()
+
+        if args.src_lan in default_inits_tgt and args.tgt_lan in default_inits_tgt:
+            default_translations = default_inits_tgt
+        else:
+            default_translations = hovercraft_translations
+
+        init_src = default_translations[args.src_lan].split()
         if args.init_prompt_tgt is None:
-            init_tgt = default_inits_tgt[args.tgt_lan]
-            if args.tgt_lan == "ja":
+            init_tgt = default_translations[args.tgt_lan]
+            if args.tgt_lan == "ja" and args.src_lan == "en":
                 init_src = 'Please go ahead and start your presentation.'.split()
-                print("WARNING: Default init_prompt_src not set and language is Japanese. The init_src prompt changed to be more verbose.", file=sys.stderr)
+                print("WARNING: Default init_prompt_src not set, src_lan is English and tgt_lan is Japanese. The init_src prompt changed to be more verbose.", file=sys.stderr)
         else:
             print("WARNING: init_prompt_tgt is used, init_prompt_src is None, the default one. It may be wrong!", file=sys.stderr)
             init_tgt = args.init_prompt_tgt
@@ -462,21 +509,31 @@ def handle_outputs(out_seq, in_row, timer, is_final=False):
     for r in format_outputs(out_seq, in_row, timer, is_final=is_final):
         print(json.dumps(r), flush=True)
 
-def simulation_update(simul, row, timer, out_handler=handle_outputs):
-    if "text" in row:
-        print("INPUT:", row["text"], file=sys.stderr)
-        words = row["text"].split()
-        if not row["text"].startswith(" "):
-            simul.insert_suffix(words[0])
-            words = words[1:]
-        simul.insert(words)
-        out = simul.process_iter(is_final=row["is_final"])
+def simulation_update(simul, rows, timer, out_handler=handle_outputs):
+    # Insert all rows, then update.
+    # Except of final rows, which are processed immediately.
+    # TODO: experiment whether it's wise. It may accumulate delay in the worst case. 
+    inserted = False
+    for row in rows:
+        if "text" in row:
+            print("INPUT:", row["text"], file=sys.stderr)
+            words = row["text"].split()
+            if not row["text"].startswith(" "):
+                simul.insert_suffix(words[0])
+                words = words[1:]
+            simul.insert(words)
+            inserted = True
+        if row["is_final"]:
+            if inserted:
+                out = simul.process_iter(is_final=row["is_final"])
+                out_handler(out, row, timer)
+            out = simul.finish()
+            out_handler(out, row, timer, is_final=True)
+            simul.init()
+            inserted = False
+    if inserted:
+        out = simul.process_iter(is_final=False) # if the last row is final, it was already processed.
         out_handler(out, row, timer)
-    if row["is_final"]:
-        out = simul.finish()
-        out_handler(out, row, timer, is_final=True)
-        simul.init()
-
 
 def main_simulation_from_file():
     import argparse
@@ -502,16 +559,31 @@ def main_simulation_from_file():
 #        elapsed = instance["elapsed"]
 #
 #        yield_ts_words = zip(timestamps, timestamps, elapsed, asr_source.split())
-    else:
-        print("INFO: Reading stdin in jsonl format", file=sys.stderr)
-        def yield_input():
-            for line in sys.stdin:
-                yield json.loads(line)
-        yield_ts_words = yield_input()
 
+    # Only jsonl input works.
+
+    un = "un" if args.comp_unaware else ""
+    print(f"INFO: Reading stdin in jsonl format, computationally {un}aware simulation.", file=sys.stderr)
     timer = SimulationTimer(comp_aware=not args.comp_unaware)
-    for row in yield_ts_words:
-        simulation_update(simul, row, timer)
+    if args.comp_unaware:
+        for line in sys.stdin:
+            row = json.loads(line)
+            simulation_update(simul, [row], timer)
+    else:
+        # compuationally aware simulation:
+        eos = False
+        while not eos:
+            rows = []
+            # Check if stdin has data available *right now*
+            while select.select([sys.stdin], [], [], 0)[0]:
+                line = sys.stdin.readline()
+                if not line:  # end of input stream
+                    eos = True
+                    break
+                rows.append(json.loads(line))
+            if rows:
+                simulation_update(simul, rows, timer)
+
 
 if __name__ == "__main__":
     main_simulation_from_file()

@@ -51,7 +51,7 @@ class TextServerProcessor:
         self.buffer = ""
         self.endswith_eos = False
 
-    def receive_input_chunk(self):
+    def receive_input_rows(self):
         out = []
         lines = self.connection.receive_lines()
         print(lines,flush=True,file=sys.stderr)
@@ -135,14 +135,11 @@ class TextServerProcessor:
         timer = SimulationTimer(comp_aware=True)
         self.simul.init()
         while True:
-            a = self.receive_input_chunk()
-            if a is None or a == []:
+            rows = self.receive_input_rows()
+            if rows is None or rows == []:
                 break
-            inserted = False
             try:
-                for w in a:
-                    print("TADY",w,flush=True,file=sys.stderr)
-                    simulation_update(self.simul, w, timer, out_handler=send_seq)
+                simulation_update(self.simul, rows, timer, out_handler=send_seq)
             except BrokenPipeError:
                 logger.info("broken pipe -- connection closed?")
                 return
