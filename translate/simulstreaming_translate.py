@@ -299,6 +299,7 @@ lan_to_name = {
     "zh-sim": "Chinese Simplified",
     "cs": "Czech",
     "hu": "Hungarian",
+    "en": "English"
     # TODO: all EuroLLM languages
     }
 
@@ -310,6 +311,7 @@ default_prompt="You are simultaneous interpreter from {SrcLang} to {TgtLang}. We
 default_init = "Please, go ahead, you can start with your presentation, we are ready."
 
 default_inits_tgt = {
+    "en": default_init,
     'de': "Bitte schön, Sie können mit Ihrer Präsentation beginnen, wir sind bereit.",
     'ja': "どうぞ、プレゼンテーションを始めてください。",  # # Please go ahead and start your presentation.  # this is in English
     'zh-tr': "請繼續，您可以開始您的簡報，我們已經準備好了。",
@@ -333,7 +335,7 @@ lan_thresholds = {
    # 'cs': I don't know    # guessed
 }
 
-
+lan_choices = list(lan_to_name.keys())
 
 def translate_args(parser):
     parser.add_argument('--min-chunk-size', type=int, default=1, 
@@ -342,13 +344,13 @@ def translate_args(parser):
                         help='Minimum number of space-delimited words at the beginning.')
     #parser.add_argument('--start_at', type=int, default=0, help='Skip first N words.')
 
-    # maybe later
-    #parser.add_argument('--offline', action="store_true", default=False, help='Offline mode.')
-    parser.add_argument('--comp_unaware', action="store_true", default=False, help='Computationally unaware simulation.')
+    parser.add_argument('--src-lan', '--src-language', type=str, default="en", 
+                        help="Source language code.",
+                        choices=lan_choices)
 
-    parser.add_argument('--lan', '--language', type=str, default="de", 
+    parser.add_argument('--tgt-lan', '--tgt-language', type=str, default="de", 
                         help="Target language code.",
-                        choices=["de", "ja","zh-tr","zh-sim","cs"])
+                        choices=lan_choices)
 
     parser.add_argument('--sys_prompt', type=str, default=None, 
                         help='System prompt. If None, default one is used, depending on the language. The prompt should ')
@@ -379,20 +381,24 @@ def translate_args(parser):
 def simulation_args(parser):
     parser.add_argument('--input-instance', type=str, default=None, help="Filename of instances to simulate input. If not set, txt input is read from stdin.")
     #parser.add_argument('--output_instance', type=str, default=None, help="Write output as instance into this file, while also writing to stdout.")
+    # maybe later
+    #parser.add_argument('--offline', action="store_true", default=False, help='Offline mode.')
+    parser.add_argument('--comp_unaware', action="store_true", default=False, help='Computationally unaware simulation.')
 
 
 def simul_translator_factory(args):
     if args.sys_prompt is None:
-        TgtLang = lan_to_name[args.lan]
+        TgtLang = lan_to_name[args.tgt_lan]
+        SrcLang = lan_to_name[args.src_lan]
         sys_prompt = default_prompt.format(SrcLang=SrcLang, TgtLang=TgtLang)
     else:
         sys_prompt = args.sys_prompt
 
     if args.init_prompt_src is None:
-        init_src = default_init.split()
+        init_src = default_inits_tgt[args.src_lan].split()
         if args.init_prompt_tgt is None:
-            init_tgt = default_inits_tgt[args.lan]
-            if args.lan == "ja":
+            init_tgt = default_inits_tgt[args.tgt_lan]
+            if args.tgt_lan == "ja":
                 init_src = 'Please go ahead and start your presentation.'.split()
                 print("WARNING: Default init_prompt_src not set and language is Japanese. The init_src prompt changed to be more verbose.", file=sys.stderr)
         else:
@@ -402,7 +408,7 @@ def simul_translator_factory(args):
         init_src = args.init_prompt_src.split()
         if args.init_prompt_tgt is None:
             print("WARNING: init_prompt_src is used, init_prompt_tgt is None, so the default one is used. It may be wrong!", file=sys.stderr)
-            init_tgt = default_inits_tgt[args.lan]
+            init_tgt = default_inits_tgt[args.tgt_lan]
         else:
             init_tgt = args.init_prompt_tgt
 
@@ -415,13 +421,13 @@ def simul_translator_factory(args):
             print("ERROR: --len-threshold is set, but --language-specific-len-threshold is also set. Only one can be used.", file=sys.stderr)
             sys.exit(1)
         else:
-            len_threshold = lan_thresholds[args.lan]
+            len_threshold = lan_thresholds[args.tgt_lan]
     else:
         len_threshold = args.len_threshold
 
     llmtrans = LLMTranslator(system_prompt=sys_prompt, max_context_length=args.max_context_length, len_ratio=len_threshold,
                              model_dir=args.model_dir, tokenizer_dir=args.tokenizer_dir)
-    lan = args.lan if not args.lan.startswith("zh") else "zh"
+    lan = args.tgt_lan if not args.tgt_lan.startswith("zh") else "zh"
     simul = SimulLLM(llmtrans,language=lan, min_len=args.min_len, chunk=args.min_chunk_size,
                     init_src=init_src, init_tgt=init_tgt, trimming=args.buffer_trimming
                     )
@@ -457,8 +463,8 @@ def handle_outputs(out_seq, in_row, timer, is_final=False):
         print(json.dumps(r), flush=True)
 
 def simulation_update(simul, row, timer, out_handler=handle_outputs):
-    print("INPUT:", row["text"], file=sys.stderr)
     if "text" in row:
+        print("INPUT:", row["text"], file=sys.stderr)
         words = row["text"].split()
         if not row["text"].startswith(" "):
             simul.insert_suffix(words[0])

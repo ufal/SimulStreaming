@@ -102,12 +102,15 @@ class ServerProcessor:
     def process(self):
         # handle one client connection
         self.online_asr_proc.init()
+        beg_time = time.time()
         while True:
             a = self.receive_audio_chunk()
             if a is None:
                 break
             self.online_asr_proc.insert_audio_chunk(a)
             o = self.online_asr_proc.process_iter()
+            if o:
+                o["emission_time"] = time.time() - beg_time
             try:
                 self.send_result(o)
             except BrokenPipeError:
