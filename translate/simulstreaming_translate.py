@@ -568,6 +568,7 @@ def main_simulation_from_file():
             simulation_update(simul, [row], timer)
     else:
 #            # compuationally aware simulation from stdin:
+             # it worked but did not make sense :(
 #            eos = False
 #            while not eos:
 #                rows = []
