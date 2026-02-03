@@ -5,7 +5,7 @@ import sentencepiece as spm
 import transformers
 import json
 import time
-import select
+#import select
 
 def generate_words(sp, step_results):
     tokens_buffer = []
@@ -26,7 +26,7 @@ def generate_words(sp, step_results):
         if word:
             yield word
 
-from sentence_segmenter import SentenceSegmenter
+from simulstreaming.translate.sentence_segmenter import SentenceSegmenter
 
 class LLMTranslator:
 
@@ -374,7 +374,7 @@ lan_thresholds = {
    # 'cs': I don't know    # guessed
 }
 
-from hovercraft import *
+from simulstreaming.translate.hovercraft import *
 
 lan_choices = sorted(set(list(lan_to_name.keys())+list(hovercraft_translations.keys())))
 
