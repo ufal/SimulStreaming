@@ -1,5 +1,30 @@
 # SimulStreaming
 
+SimulStreaming is a tool for simultaneous (aka streaming) processing of speech-to-text and LLM translation models. 
+
+✨ Key features:
+- 🌐 Multilingual: 99 Whisper source languages → 35 EuroLLM target languages.
+- 📝 Translation + ASR.
+- ⚡ Real-time and faster than ever: ~5-times faster than our previous release called WhisperStreaming, thanks to efficient simultaneous policy.
+- 🧩 Flexible prompting & context: Supports in-domain terminology and retrieval augmented generation (RAG).
+- 🎯 High quality: Simultaneous use of strong foundation models with little performance loss.
+- 🔧 Simple & robust: Clean middleware design – server with mic input or file simulation.
+- 💻 Feasible hardware: Optimized for 1–2 GPUs (Whisper large-v3 1.5B + EuroLLM 9B), but possible with smaller distilled models.
+- 🚀🔬 For production and research: designed to process authentic long-form speech. 
+- 🏆 State of the art 2025: the best-performing in IWSLT 2025 Simultaneous Speech Translation Shared Task.
+
+SimulStreaming supports:
+- **direct speech-to-text** using Whisper for translation from 99 into English, or for transcription in these languages.
+- **cascade** of Whisper speech-to-text + EuroLLM text-to-text translation, for 35 target languages.
+
+This diagram shows 4 example language directions that were used in IWSLT 2025. In fact, there are many more:
+
+<p align="center">
+    <img src=".img/flags-diagram.png">
+</p>
+
+
+
 SimulStreaming implements Whisper model for translation and transcription in
 simultaneous mode (which is known as *streaming* in the ASR community).
 SimulStreaming uses the state-of-the-art simultaneous policy AlignAtt, which
@@ -22,41 +47,59 @@ SimulStreaming originates as [Charles University (CUNI) submission to the IWSLT
 and high quality. It is among the top performing systems in IWSLT 2025
 Simultaneous Shared Task.
 
-## Installation
+## Usage
 
-The direct speech-to-text Whisper part can be installed with
+SimulStreaming has two components: 
 
+- 1. Whisper speech-to-text -- in `simulstreaming/whisper`
+- 2. LLM text-to-text translation  -- in `simulstreaming/translate`
+
+Any of these components can be installed and used independently on the other, e.g. in two HW environments, but 2. expects source from 1. 
+
+The only code used by both components are `simulstreaming/utils`. There are server utils that don't need to be installed. 
+
+### 1. Whisper speech-to-text
+
+#### Installation
+
+```bash
+pip install -r requirements_whisper.txt
 ```
-pip install -r requirements.txt
-```
-
-The comments in `requirements.txt` document the origin of dependencies. There is originally WhisperStreaming code inserted in the `whisper_streaming` dir. It is simplified and refactored.
-Simul-Whisper code is in `simul_whisper`, it includes the [original Whisper](https://github.com/openai/whisper) code adapted for SimulWhisper in `simul_whispre/whisper`.
-
 **Lighter installation**
 
-For slightly lighter installation,  remove `torchaudio` from `requirements.txt`. Then you can not use the Silero VAD controller (`--vac` option).
+For slightly lighter installation, remove `torchaudio`. Then you can not use the Silero VAD controller (`--vac` option).
 
-**Text-to-Text Translation**
+#### Dependencies
 
-Follow [translate/README.txt](translate/README.txt).
+**SW:**
 
-## Usage 
+The comments in `requirements_whisper.txt` document the origin of SW dependencies. Code from three projects was copied, modified and included in this repo:
+- [WhisperStreaming](https://github.com/ufal/whisper_streaming): in `simulstreaming/whisper/whisper_streaming` dir. It is simplified and refactored. This project uses WhisperStreaming's interface of server and simulation from file, and Voice Activity Controller that detects and skips unvoiced segments of audio.   
+- [Simul-Whisper](https://github.com/backspacetg/simul_whisper): in `simulstreaming/whisper/simul_whisper`. It was refactored and extended with new features such as support of Whisper large-v3 model, beam decoding, translation and not only transcription. 
+- [OpenAI Whisper](https://github.com/openai/whisper): code adapted for Simul-Whisper in `simulstreaming/whisper/simul_whisper/whisper`. It uses `torch` as deep learning computation framework.
 
-### Real-time simulation from audio file
+**HW:**
+
+Recommended HW is GPU with at least 10G VRAM, to run the best-performing Whisper model large-v3 with 1.5B parameters. The code works also on CPU but would be too slow for real-time.
+
+#### Usage: Real-time simulation from audio file
 
 
 ```
+$ python3 simulstreaming_whisper.py -h
 usage: simulstreaming_whisper.py [-h] [--min-chunk-size MIN_CHUNK_SIZE] [--lan LAN] [--task {transcribe,translate}] [--vac] [--vac-chunk-size VAC_CHUNK_SIZE]
-                                 [-l {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--model_path MODEL_PATH] [--beams BEAMS] [--decoder DECODER] [--audio_max_len AUDIO_MAX_LEN]
-                                 [--audio_min_len AUDIO_MIN_LEN] [--frame_threshold FRAME_THRESHOLD] [--cif_ckpt_path CIF_CKPT_PATH] [--never_fire | --no-never_fire]
-                                 [--init_prompt INIT_PROMPT] [--static_init_prompt STATIC_INIT_PROMPT] [--max_context_tokens MAX_CONTEXT_TOKENS] [--start_at START_AT] [--comp_unaware]
+                                 [-l {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--logdir LOGDIR] [--out-txt] [--model_path MODEL_PATH] [--beams BEAMS] [--decoder DECODER]
+                                 [--audio_max_len AUDIO_MAX_LEN] [--audio_min_len AUDIO_MIN_LEN] [--frame_threshold FRAME_THRESHOLD] [--cif_ckpt_path CIF_CKPT_PATH]
+                                 [--never_fire | --no-never_fire] [--init_prompt INIT_PROMPT] [--static_init_prompt STATIC_INIT_PROMPT] [--max_context_tokens MAX_CONTEXT_TOKENS]
+                                 [--start_at START_AT] [--comp_unaware]
                                  audio_path
 
 options:
   -h, --help            show this help message and exit
   -l {DEBUG,INFO,WARNING,ERROR,CRITICAL}, --log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
                         Set the log level
+  --logdir LOGDIR       Directory to save audio segments and generated texts for debugging.
+  --out-txt             Output formatted as not as jsonl but simple space-separated text: beg, end, text
 
 WhisperStreaming processor arguments (shared for simulation from file and for the server):
   --min-chunk-size MIN_CHUNK_SIZE
@@ -111,13 +154,13 @@ Arguments for simulation from file:
   --comp_unaware        Computationally unaware simulation.
 ```
 
-Example:
+**Example:**
 
 ```
-python3 simulstreaming_whisper.py audio.wav --language cs  --task translate --comp_unaware
+python3 simulstreaming_whisper.py audio.wav --language en --task transcribe --comp_unaware --vac
 ```
 
-Simulation modes:
+**Simulation modes:**
 
 - default mode, no special option: real-time simulation from file, computationally aware. The chunk size is `MIN_CHUNK_SIZE` or larger, if more audio arrived during last update computation.
 
@@ -128,11 +171,146 @@ Simulation modes:
 - offline mode, to process whole audio with maximum quality, is not available yet. Instead, try large `--min-chunk-size` and `--frame-threshold`.
 
 
-### Server -- real-time from mic 
+**Output format:**
 
-The entry point `simulstreaming_whisper_server.py` has the same model options as `simulstreaming_whisper.py`, plus `--host` and `--port` of the TCP connection, `--out-txt`, which switches the output format from json to simple text with timestamp information, and the `--warmup-file`. The warmup file is decoded by the Whisper backend after the model is loaded because without that, processing of the very the first input chunk may take longer.
+1) Default JSONL
+
+Default stdout is jsonl. The command incrementally processes incoming audio chunks. After each chunk, there can be either:
+- no output
+- a line with partial text output, like
+
+```
+{"start": 0.332, "end": 0.832, "text": " And so,", "tokens": [400, 370, 11], "words": [{"start": 0.332, "end": 0.332, "text": " And", "tokens": [400]}, {"start": 0.532, "end": 0.532, "text": " so", "tokens": [370]}, {"start": 0.832, "end": 0.832, "text": ",", "tokens": [11]}], "is_final": false, "emission_time": 2.246028423309326}
+```
+
+- a line indicating end of voiced segment without any text update: 
+
+```
+{"is_final": true, "emission_time": 3.060192108154297}
+```
+
+Explanation of json fields:
+
+```
+{
+  # start and end timestamps, in seconds, of a segment of the source audio where this partial output was detected by Whisper model. 
+  # Warning: it may be inaccurate but good enough for some applications.
+  "start": 0,  
+  "end": 0.68,  
+
+
+  # the partial text output produced in this update
+  "text": " And so",  # the partial text output produced by this update
+  "tokens": [  # list of token ids of text, used by Whisper tokenizer
+    400,
+    370
+  ],
+
+  # text segmented for more detailed word-level view
+  "words": [  
+    {
+      "start": 0,  
+      "end": 0,
+      "text": " And",
+      "tokens": [  
+        400
+      ]
+    },
+    {
+      "start": 0.68,
+      "end": 0.68,
+      "text": " so",
+      "tokens": [
+        370
+      ]
+    }
+  ],
+
+
+  # a flag indicating end of voice at the end of segment in the original audio
+  # this is used only with --vac option (Voice Activity Controller)
+  "is_final": false,
+
+  # simulation time, in seconds, when this line of output was produced
+  # - in computational aware simulation: real time from the beginning of process  
+  # - in computatational unaware simulation: length of incoming audio
+  "emission_time": 1.9224984645843506
+}
+```
+
+2. Simple text, with `--out-txt` option:
+
+For back dependency, and for better eye-readable output for debugging, there is option for this format:
+
+```
+2246.5429 332 832  And so,
+3468.0274 1032 1712  my fellow Americans
+4637.6612 2172 3272 , ask
+```
+
+On each line, there are 3 space-delimited columns: 
+-  1. emission time, in milliseconds
+- 2.-3. start and end timestamps, in milliseconds
+
+After these three columns, there is one space, and then the text. Notice that the text may start with a space, as the first line " And so,", or may not, as the 3rd line ", ask".
+
+End of voice or word-level segments are not indicated in this format.
+
+**Debug: Logdir**
+
+With `--logdir LOGDIR` and `--vac` parameters, the tool will create a directory named LOGDIR. In this dir, there will be subdirectories for each voiced segment. Inside, for each chunk update, there will be: 
+- an audio file with exact content of the audio buffer,
+- text hypothesis file, containing the context, decoder text buffer used for forced decoding, and the hypothesis.
+
+The file structure may look like this:
+
+```
+seg_00002:
+iter_00001_audio.wav  iter_00001_hypothesis.txt
+
+seg_00004:
+iter_00002_audio.wav       iter_00003_audio.wav       iter_00004_audio.wav       iter_00005_audio.wav
+iter_00002_hypothesis.txt  iter_00003_hypothesis.txt  iter_00004_hypothesis.txt  iter_00005_hypothesis.txt
+
+...
+```
+
+The hypotheses files may contain:
+
+```
+==> seg_00002/iter_00001_hypothesis.txt <==
+CONTEXT+FORCED:	<|startoftranscript|><|en|><|transcribe|><|notimestamps|>
+HYPOTHESIS:	 And so
+
+==> seg_00004/iter_00002_hypothesis.txt <==
+CONTEXT+FORCED:	<|startoftranscript|><|en|><|transcribe|><|notimestamps|>
+HYPOTHESIS:	 And so,
+
+==> seg_00004/iter_00003_hypothesis.txt <==
+CONTEXT+FORCED:	<|startoftranscript|><|en|><|transcribe|><|notimestamps|> And so,
+HYPOTHESIS:	 my fellow Americans
+
+==> seg_00004/iter_00004_hypothesis.txt <==
+CONTEXT+FORCED:	<|startoftranscript|><|en|><|transcribe|><|notimestamps|> And so, my fellow Americans
+HYPOTHESIS:	, ask
+
+==> seg_00004/iter_00005_hypothesis.txt <==
+CONTEXT+FORCED:	<|startoftranscript|><|en|><|transcribe|><|notimestamps|> And so, my fellow Americans, ask
+HYPOTHESIS:	 not.
+```
+
+Note that the very first segment and hypothesis `seg_00002/iter_00001_hypothesis.txt` is from "warm-up" processing. Before beginning of each compuatationally aware simulation, the first 1 second is processed by model so that the following updates are faster.
+
+
+### Usage: Server -- real-time from mic 
+
+The entry point `simulstreaming_whisper_server.py` has the same model options as `simulstreaming_whisper.py`, plus:
+- `--host` and `--port` of the TCP connection, 
+- `--warmup-file`: the warmup audio file is decoded by the Whisper backend after the model is loaded because without that, processing of the very the first input chunk may take longer.
 
 See the help message (`-h` option).
+
+Only computationally aware simulation is available with server. The option `--out-txt` produces only 2 timestamps columns, the beginning and end timestamps in the input audio. Emission time is not available.
 
 **Linux** client example:
 
@@ -147,30 +325,14 @@ arecord -f S16_LE -c1 -r 16000 -t raw -D default | nc localhost 43001
 **Windows/Mac**: `ffmpeg` may substitute `arecord`. Or use the solutions proposed in Whisper-Streaming pull requests [#111](https://github.com/ufal/whisper_streaming/pull/111) and [#123](https://github.com/ufal/whisper_streaming/pull/123).
 
 
+### Usage: As a module
 
-### Output format
+Analogically to using [WhisperStreaming as a module](https://github.com/ufal/whisper_streaming?tab=readme-ov-file#as-a-module).
 
-This is example of the output format of the simulation from file. 
 
-```
-1200.0000 0 1200  And so
-2400.0000 1200 2400  my fellow Americans
-3600.0000 2400 3600 ,
-4800.0000 3600 4800  ask not
-6000.0000 4800 6000  what
-7200.0000 6000 7200  your country can do
-8400.0000 7200 8400  for you,
-9600.0000 8400 9600  ask what you
-10800.0000 9600 10800  can do for your country
-11000.0000 10800 11000 .
-```
+## Translate with LLM
 
-It's space-separated. The first three columns are:
-- column 1: the emission time of that line, in miliseconds. In `--comp_unaware` mode, it's the simulated time. In server, this column is not there.
-- columns 2-3: the beginning and end timestamp of the line in original audio. (TODO: it should be, currently it is very rough approximation.)
-- columns 4-: This column starts either with a space, if the previous line had to be appended with a space, or with a character that has to be appended to the previous line (like comma or dot).
-
-The output from the server is in json format by default. If argument --out-txt is passed, the output from the server is the same as the output from the simulation from file, except the first column is not there.
+TODO
 
 
 ## 📣 Feedback Welcome!
@@ -184,7 +346,7 @@ SimulStreaming, we kindly ask the users, especially commercial, to fill out this
 
 ## 📄 Licence
 
-Now under MIT.
+MIT.
 
 ## 🤝 Contributions
 
