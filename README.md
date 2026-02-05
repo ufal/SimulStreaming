@@ -10,7 +10,7 @@ SimulStreaming is a tool for simultaneous (aka streaming) processing of speech-t
 - 🎯 High quality: Simultaneous use of strong foundation models with little performance loss.
 - 🔧 Simple & robust: Clean middleware design – server with mic input or file simulation.
 - 💻 Feasible hardware: Optimized for 1–2 GPUs (Whisper large-v3 1.5B + EuroLLM 9B), but possible with smaller distilled models.
-- 🚀🔬 For production and research: designed to process authentic long-form speech. 
+- 🚀🔬 For production and research: designed to process **authentic long-form speech**. 
 - 🏆 State of the art 2025: the best-performing in IWSLT 2025 Simultaneous Speech Translation Shared Task.
 
 SimulStreaming supports:
@@ -23,31 +23,15 @@ This diagram shows 4 example language directions that were used in IWSLT 2025. I
     <img src=".img/flags-diagram.png">
 </p>
 
+More info: 
+- [Background](#background) section
+- Paper that describes SimulStreaming: [Simultaneous Translation with Offline Speech and LLM Models in CUNI Submission to IWSLT 2025](https://aclanthology.org/2025.iwslt-1.41/) (Macháček & Polák, IWSLT 2025)
+- [BibTeX citation in ACL Anthology](https://aclanthology.org/2025.iwslt-1.41/)
+- [Poster from IWSLT 2025](https://ufallab.ms.mff.cuni.cz/~machacek/iwslt25/SimulStreaming_poster_IWSLT25-1.pdf).
+- Brief description at [ELITR.eu/iwslt25](https://elitr.eu/iwslt25/), including how to ask for a self-service online demo.
 
 
-SimulStreaming implements Whisper model for translation and transcription in
-simultaneous mode (which is known as *streaming* in the ASR community).
-SimulStreaming uses the state-of-the-art simultaneous policy AlignAtt, which
-makes it very fast and efficient.
-
-SimulStreaming merges [Simul-Whisper](https://github.com/backspacetg/simul_whisper/) and [Whisper-Streaming](https://github.com/ufal/whisper_streaming) projects.
-Simul-Whisper implemented AlignAtt with Whisper, but only using large-v2 model
-for transcription. We extend it with support for translation and large-v3 model, and with beam search, prompt for injecting in-domain
-terminology, and context across the 30-second processing windows. Moreover,
-Simul-Whisper implements only less realistic simulation on sentence-segmented
-speech. Therefore, we use the interface of Whisper-Streaming for the long-form input
-simulation, both computationally unaware and aware, and from both audio file and
-simple demo TCP server that can be connected to microphone.
-
-Moreover, SimulStreaming adds a machine translation model EuroLLM in a cascade, with LocalAgreement simultaneous policy, system
-prompt, and in-context example.
-
-SimulStreaming originates as [Charles University (CUNI) submission to the IWSLT
-2025 Simultaneous Shared Task](https://arxiv.org/abs/2506.17077). The results show that this system is extremely robust
-and high quality. It is among the top performing systems in IWSLT 2025
-Simultaneous Shared Task.
-
-## Usage
+## How to use SimulStreaming
 
 SimulStreaming has two components: 
 
@@ -330,7 +314,7 @@ arecord -f S16_LE -c1 -r 16000 -t raw -D default | nc localhost 43001
 Analogically to using [WhisperStreaming as a module](https://github.com/ufal/whisper_streaming?tab=readme-ov-file#as-a-module).
 
 
-## Translate with LLM
+## 2. Translate with LLM
 
 ### Installation
 
@@ -342,7 +326,7 @@ pip install -r requirements_translate.txt
 
 Then, download an LLM model from Huggingface and convert it to CTranslate2.
 
-Example for [EuroLLM-9B-Instruct](https://huggingface.co/utter-project/EuroLLM-9B-Instruct)
+Example for [EuroLLM-9B-Instruct](https://huggingface.co/utter-project/EuroLLM-9B-Instruct):
 - Go to https://huggingface.co/utter-project/EuroLLM-9B-Instruct .
 - It is a gated model. Sign in to hf.co and get access granted.
 - Then, clone this model repository to a dir named `EuroLLM-9B-Instruct`. Use any of the ways suggested on HF webpage, e.g.:
@@ -408,7 +392,7 @@ options:
 Example:
 
 ```
-# First process audio with Whisper and save to jsonl file.
+# First, process audio with Whisper and save to jsonl file.
 python3 simulstreaming_whisper.py audio.wav --language en --task transcribe --comp_unaware --vac > output.jsonl
 
 # Then simulate LLM translation:
@@ -461,7 +445,7 @@ The fields are:
 }
 ```
 
-### Usage: Real-time from mic, then to Whisper server, then to LLM server
+### Usage: Real-time from mic -> Whisper server -> LLM server
 
 The entry point `simulstreaming_translate_server.py` has the same model options as `simulstreaming_whisper.py`, plus:
 - `--host` and `--port` of the TCP connection. 
@@ -470,7 +454,7 @@ The entry point `simulstreaming_translate_server.py` has the same model options 
 
 - start Whisper TCP server
 - start Translate TCP server
-- on Linux, use `nc` (netcat) as client
+- on Linux, use `nc` (netcat) as a client
 - (recall usage of `arecord` on Linux for mic audio input)
 
 ```
@@ -479,7 +463,7 @@ arecord -f S16_LE -c1 -r 16000 -t raw -D default | nc localhost ${WHISPER_PORT} 
 
 **A tip for debugging**:
 
-Use several terminals: 
+Use the following separate terminals.
 - two separate terminals for both TCP servers, Whisper and LLM
 - next terminal: `arecord ... | nc localhost ${WHISPER_PORT} | tee whisper-out.jsonl` 
 - next terminal: `tail -f whisper-out.jsonl | nc localhost ${TRANSLATE_PORT} | tee llm-out.jsonl`
@@ -490,6 +474,40 @@ but it doesn't go through pipes immediately, but a big chunk of lines once in a 
 
 
 ## Background
+
+SimulStreaming is a tool for simultaneous (aka streaming, real-time, low-latency, incremental, ...) processing of Whisper speech-to-text and EuroLLM text-to-text models that were originally designed for offline processing. 
+
+SimulStreaming merges [Simul-Whisper](https://github.com/backspacetg/simul_whisper/) and [Whisper-Streaming](https://github.com/ufal/whisper_streaming) projects.
+Simul-Whisper implemented AlignAtt with Whisper, but only using large-v2 model
+for transcription. We extend it with support for translation and large-v3 model, and with beam search, prompt for injecting in-domain
+terminology, and context across the 30-second processing windows. Moreover,
+Simul-Whisper implements only less realistic simulation on sentence-segmented
+speech. Therefore, we use the interface of Whisper-Streaming for the long-form input
+simulation, both computationally unaware and aware, and from both audio file and
+simple demo TCP server that can be connected to microphone. 
+
+**Simultaneous policies: AlignAtt and LocalAgreement**
+
+Deep learning (aka AI) models, such as Whisper or EuroLLM, are typically very robust, high-quality, but are primarily designed to process complete input. 
+On the contrary, there may be models specifically designed and trained for simultaneous mode, that expects that the input is available subsequently, in chunks. 
+But, simultaneous training may be difficult and may not achieve the highest quality. A paper from Papi et al. (2022) show that simultaneous translation does 
+not need models trained for simultaneous mode because offline models decoded with a special algorithm for simultaneous processing, called *simultaneous policy*, achieves similar quality.
+
+Therefore, simultaneous policies were proposed. The best-performing in 2025 is called AlignAtt. It uses encoder-decoder attention to determine, which part of source is being 
+decoded at each step of decoding loop. If attention reaches a "dangerous zone" near the end of current autio buffer, decoding stops. It is continued with next input audio chunks. 
+
+LocalAgreement is the second best-performing policy, but is much easier to implement. It confirms the longest common prefix of the output of two subsequent updates.
+
+**The name SimulStreaming**:
+
+The name *SimulStreaming* merges Simul-Whisper and Whisper-Streaming, but removes Whisper from the name because it does not depend only on Whisper anymore. 
+There is also EuroLLM to be used in a cascade, and other models can be integrated in future without making the name obsolete.
+
+The name SimulStreaming also aims to be understandable and used by two communities of researchers that have their own "jargon". The term *simultaneous* is used in speech translation, and *streaming* in speech recognition (ASR). SimulStreaming supports "streaming ASR" and "simultaneous translation".
+
+**ELITR**:
+
+SimulStreaming is one of follow up projects of [ELITR](https://elitr.eu) (European Live Translator, 2019-2022). It is designed as one of the tools in a complex distributed pipeline for long-form monologue speech transcription and translation between many languages (ref. to papers: [1](https://aclanthology.org/2020.iwltp-1.7/),[2](https://aclanthology.org/2021.mtsummit-asltrw.3/),[3](https://aclanthology.org/2021.eacl-demos.32/)). The other tools usable in such pipelines, as well as in other projects, are e.g. [Pipeliner](https://github.com/ELITR/pipeliner), [MT-wrapper](https://github.com/ELITR/mt-wrapper/), a front-end web application [online-text-flow](https://github.com/ELITR/online-text-flow), and a tool for [ASR latency evaluation](github.com/ufal/asr_latency).
 
 ## 📣 Feedback Welcome!
 
@@ -506,7 +524,9 @@ MIT.
 
 ## 🤝 Contributions
 
-Contributions to SimulStreaming are welcome. 
+Contributions welcome. 
+
+A remarkable contribution project that integrates SimulStreaming is [WhispeLiveKit](https://github.com/QuentinFuxa/WhisperLiveKit).
 
 ## ✉️ Contact
 
