@@ -394,7 +394,7 @@ def translate_args(parser):
                         choices=lan_choices)
 
     parser.add_argument('--sys_prompt', type=str, default=None, 
-                        help='System prompt. If None, default one is used, depending on the language. The prompt should ')
+                        help='System prompt. If None, default one is used, depending on the language.')
 
     parser.add_argument('--init_prompt_src', type=str, default=None, help='Init translation with source text. It should be a complete sentence in the source language. ' 
                         'It can be context specific for the given input. Default is ')

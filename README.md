@@ -249,7 +249,7 @@ For back dependency, and for better eye-readable output for debugging, there is 
 ```
 
 On each line, there are 3 space-delimited columns: 
--  1. emission time, in milliseconds
+- 1. emission time, in milliseconds
 - 2.-3. start and end timestamps, in milliseconds
 
 After these three columns, there is one space, and then the text. Notice that the text may start with a space, as the first line " And so,", or may not, as the 3rd line ", ask".
@@ -332,8 +332,164 @@ Analogically to using [WhisperStreaming as a module](https://github.com/ufal/whi
 
 ## Translate with LLM
 
-TODO
+### Installation
 
+First, install SW dependencies:
+
+```
+pip install -r requirements_translate.txt
+```
+
+Then, download an LLM model from Huggingface and convert it to CTranslate2.
+
+Example for [EuroLLM-9B-Instruct](https://huggingface.co/utter-project/EuroLLM-9B-Instruct)
+- Go to https://huggingface.co/utter-project/EuroLLM-9B-Instruct .
+- It is a gated model. Sign in to hf.co and get access granted.
+- Then, clone this model repository to a dir named `EuroLLM-9B-Instruct`. Use any of the ways suggested on HF webpage, e.g.:
+
+```
+# When prompted for a password, use an access token with write permissions.
+# Generate one from your settings: https://huggingface.co/settings/tokens
+git clone https://huggingface.co/utter-project/EuroLLM-9B-Instruct
+```
+
+Convert the HF model to CTranslate version that will be saved in `ct2_EuroLLM-9B-Instruct` dir:
+
+```
+pip install transformers[torch]  # suggested by https://opennmt.net/CTranslate2/guides/transformers.html
+ct2-transformers-converter --model EuroLLM-9B-Instruct/ --output_dir ct2_EuroLLM-9B-Instruct
+```
+
+Then use the dirs in the following parameters: `--model-dir ct2_EuroLLM-9B-Instruct --tokenizer-dir EuroLLM-9B-Instruct` .
+
+### Usage: Real-time simulation from jsonl file
+
+```
+$ python3 simulstreaming_translate.py -h
+usage: simulstreaming_translate.py [-h] [--min-chunk-size MIN_CHUNK_SIZE] [--min-len MIN_LEN] [--src-lan {ar,bg,ca,cs,da,de,el,en,es,et,fi,fr,ga,gl,hi,hr,hu,it,ja,ko,lt,lv,mt,nl,no,pl,pt,ro,ru,sk,sl,sv,tr,uk,zh,zh-sim,zh-tr}]
+                                   [--tgt-lan {ar,bg,ca,cs,da,de,el,en,es,et,fi,fr,ga,gl,hi,hr,hu,it,ja,ko,lt,lv,mt,nl,no,pl,pt,ro,ru,sk,sl,sv,tr,uk,zh,zh-sim,zh-tr}] [--sys_prompt SYS_PROMPT] [--init_prompt_src INIT_PROMPT_SRC]
+                                   [--init_prompt_tgt INIT_PROMPT_TGT] [--len-threshold LEN_THRESHOLD] [--language-specific-len-threshold] [--max-context-length MAX_CONTEXT_LENGTH] [--buffer_trimming {segments,sentences}]
+                                   [--model-dir MODEL_DIR] [--tokenizer-dir TOKENIZER_DIR] [-l {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--input-jsonl INPUT_JSONL] [--comp_unaware]
+
+options:
+  -h, --help            show this help message and exit
+  --min-chunk-size MIN_CHUNK_SIZE
+                        Minimum number of space-delimited words to process in each LocalAgreement update. The more, the higher quality, but slower.
+  --min-len MIN_LEN     Minimum number of space-delimited words at the beginning.
+  --src-lan {ar,bg,ca,cs,da,de,el,en,es,et,fi,fr,ga,gl,hi,hr,hu,it,ja,ko,lt,lv,mt,nl,no,pl,pt,ro,ru,sk,sl,sv,tr,uk,zh,zh-sim,zh-tr}, --src-language {ar,bg,ca,cs,da,de,el,en,es,et,fi,fr,ga,gl,hi,hr,hu,it,ja,ko,lt,lv,mt,nl,no,pl,pt,ro,ru,sk,sl,sv,tr,uk,zh,zh-sim,zh-tr}
+                        Source language code.
+  --tgt-lan {ar,bg,ca,cs,da,de,el,en,es,et,fi,fr,ga,gl,hi,hr,hu,it,ja,ko,lt,lv,mt,nl,no,pl,pt,ro,ru,sk,sl,sv,tr,uk,zh,zh-sim,zh-tr}, --tgt-language {ar,bg,ca,cs,da,de,el,en,es,et,fi,fr,ga,gl,hi,hr,hu,it,ja,ko,lt,lv,mt,nl,no,pl,pt,ro,ru,sk,sl,sv,tr,uk,zh,zh-sim,zh-tr}
+                        Target language code.
+  --sys_prompt SYS_PROMPT
+                        System prompt. If None, default one is used, depending on the language.
+  --init_prompt_src INIT_PROMPT_SRC
+                        Init translation with source text. It should be a complete sentence in the source language. It can be context specific for the given input. Default is
+  --init_prompt_tgt INIT_PROMPT_TGT
+                        Init translation with this target. It should be example translation of init_prompt_src. There is default init message, depending on the language.
+  --len-threshold LEN_THRESHOLD
+                        Ratio of the length of the source and generated target, in number of sentencepiece tokens. It should reflect the target language and. If not set, no len-threshold is used.
+  --language-specific-len-threshold
+                        Use language-specific length threshold, e.g. 1.3 for German.
+  --max-context-length MAX_CONTEXT_LENGTH
+                        Maximum number of tokens in the model to use.
+  --buffer_trimming {segments,sentences}
+                        Buffer trimming strategy.
+  --model-dir MODEL_DIR
+                        ct2 model directory. If not set, the default ct2_EuroLLM-9B-Instruct/ is used.
+  --tokenizer-dir TOKENIZER_DIR
+                        tokenizer directory. If not set, the default EuroLLM-9B-Instruct/ is used.
+  -l {DEBUG,INFO,WARNING,ERROR,CRITICAL}, --log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
+                        Set the log level
+  --input-jsonl INPUT_JSONL
+                        Filename of jsonl file to simulate input. If not set, it is read from stdin.
+  --comp_unaware        Computationally unaware simulation.
+```
+
+Example:
+
+```
+# First process audio with Whisper and save to jsonl file.
+python3 simulstreaming_whisper.py audio.wav --language en --task transcribe --comp_unaware --vac > output.jsonl
+
+# Then simulate LLM translation:
+python3 simulstreaming_translate.py --src-lang en --tgt-lan de --comp_unaware --input-jsonl output.jsonl > output-llm.jsonl
+```
+
+**Simulation modes:**
+
+- default mode, no special option: real-time simulation from jsonl file, computationally aware. The chunk size is number of space-delimited words. It is `MIN_CHUNK_SIZE` or larger, if more words arrived during  computation of the last update.
+
+- `--comp_unaware` option: computationally unaware simulation. It means that the timer that counts the emission times "stops" when the model is computing. The chunk size is always `MIN_CHUNK_SIZE` words.
+The latency is caused only by the model being unable to confirm the output, e.g. because of language ambiguity etc., and not because of slow hardware or suboptimal implementation. This is for finding the lower bound of latency.
+
+**Output format:**
+
+Output is JSONL. The command incrementally processes incoming text chunks (one line of input). During processing, zero or more lines of output can be emitted. For example:
+
+```
+{"emission_time": 8.838154792785645, "end": 0.66, "status": "INCOMPLETE", "text": "", "unconfirmed_text": "So...", "is_final": false}
+{"emission_time": 9.025235414505005, "end": 0.66, "status": "INCOMPLETE", "text": "", "unconfirmed_text": "So, please", "is_final": false}
+{"emission_time": 9.025306701660156, "end": 0.66, "status": "COMPLETE", "text": "", "unconfirmed_text": "So, please", "is_final": false}
+{"emission_time": 11.492181062698364, "end": 8.02, "status": "INCOMPLETE", "text": " So,", "unconfirmed_text": "please ask colleagues from \u00daFAL, Institute of Formally Applied Linguistics, Mathematical-Physical", "is_final": false}
+{"emission_time": 12.517757415771484, "end": 8.02, "status": "INCOMPLETE", "text": " So,", "unconfirmed_text": "So, please ask colleagues from \u00daFAL, Institute of Formally Applied Linguistics, Faculty of Mathematics and Physics.", "is_final": false}
+{"emission_time": 12.517836332321167, "end": 8.02, "status": "COMPLETE", "text": " So,", "unconfirmed_text": "So, please ask colleagues from \u00daFAL, Institute of Formally Applied Linguistics, Faculty of Mathematics and Physics.", "is_final": false}
+```
+
+The fields are:
+
+```
+{
+  "emission_time": 8.838154792785645,  # simulation time in seconds (see description of JSONL output by Whisper.)
+  "end": 0.66,  # the end of audio segment that was last processed, in seconds
+
+  # This partial output is either INCOMPLETE or COMPLETE. 
+  # INCOMPLETE means that processing of the latest partial input is not yet finished, but there already may be update in partial output. 
+  # COMPLETE means that the update is complete.
+  "status": "INCOMPLETE",
+
+  # Simultaneous translation with LLMs using LocalAgreement has internally a text buffer with two parts: 
+  # - "text" is confirmed partial output. It may be extended but not changed.
+  # - "unconfirmed_text" may be changed in next updates, but there is a chance that the prefix will be confirmed later, and may be presented to the end users. 
+  "text": "",
+  "unconfirmed_text": "So...",
+
+  # Indicates whether the upstream speech-to-text translation detected end of voiced segment.
+  # If true: 
+  # - the last unconfirmed text is immediately emitted as confirmed
+  # - all buffers are cleared, next update starts with a fresh context  
+  "is_final": false
+}
+```
+
+### Usage: Real-time from mic, then to Whisper server, then to LLM server
+
+The entry point `simulstreaming_translate_server.py` has the same model options as `simulstreaming_whisper.py`, plus:
+- `--host` and `--port` of the TCP connection. 
+
+**End-to-end usage:**
+
+- start Whisper TCP server
+- start Translate TCP server
+- on Linux, use `nc` (netcat) as client
+- (recall usage of `arecord` on Linux for mic audio input)
+
+```
+arecord -f S16_LE -c1 -r 16000 -t raw -D default | nc localhost ${WHISPER_PORT} | nc localhost ${TRANSLATE_PORT}
+```
+
+**A tip for debugging**:
+
+Use several terminals: 
+- two separate terminals for both TCP servers, Whisper and LLM
+- next terminal: `arecord ... | nc localhost ${WHISPER_PORT} | tee whisper-out.jsonl` 
+- next terminal: `tail -f whisper-out.jsonl | nc localhost ${TRANSLATE_PORT} | tee llm-out.jsonl`
+- next terminal for eye-reading whisper output: `tail -f whisper-out.jsonl | jq .text`
+- next terminal for eye-readable confirmed LLM output: `tail -f llm-out.jsonl | grep '"COMPLETE' | jq .text`
+- if you have less CPU cores than processes in the pipes, it may appear that a server is producing lines of output 
+but it doesn't go through pipes immediately, but a big chunk of lines once in a while. Then, add `stdbuf -oL` before each process. It will make OS not to switch between processes when a big chunk of lines is available to process, but after every line.
+
+
+## Background
 
 ## 📣 Feedback Welcome!
 
