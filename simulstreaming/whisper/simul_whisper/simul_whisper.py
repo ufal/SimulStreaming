@@ -122,7 +122,7 @@ class PaddedAlignAttWhisper:
         self.last_attend_frame = -self.cfg.rewind_threshold
 
         if self.cfg.max_context_tokens is None:
-            self.max_context_tokens = self.max_text_len
+            self.max_context_tokens = self.max_text_len // 2
         else:
             self.max_context_tokens = self.cfg.max_context_tokens
         self.init_context()
@@ -282,6 +282,18 @@ class PaddedAlignAttWhisper:
             if len(self.tokens) > 1:
                 self.context.append_token_ids(self.tokens[1][0,:])
                 self.tokens = [self.initial_tokens] + self.tokens[2:]
+
+        # Prevent unbounded growth of self.tokens: fold old entries into
+        # context when the total token count exceeds half the max text length.
+        # This mirrors the per-segment trimming above but catches accumulation
+        # from repeated infer() calls on the same audio window.
+        total_tok_len = sum(t.shape[1] for t in self.tokens)
+        while total_tok_len > self.max_text_len // 2 and len(self.tokens) > 1:
+            self.context.append_token_ids(self.tokens[1][0,:])
+            total_tok_len -= self.tokens[1].shape[1]
+            self.tokens = [self.initial_tokens] + self.tokens[2:]
+            logger.debug(f"fold tokens into context: {len(self.tokens)} entries, {total_tok_len} tokens")
+
         return removed_len
 
     def _clean_cache(self):
