@@ -147,6 +147,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         self.model.refresh_segment(complete=True)
 
         self.unicode_buffer = []  # hide incomplete unicode character for the next iteration
+        self.frame_buffer = 0
 
     def insert_audio_chunk(self, audio):
         self.audio_chunks.append(torch.from_numpy(audio))
@@ -162,9 +163,10 @@ class SimulWhisperOnline(OnlineProcessorInterface):
             split_words, split_tokens = generation["result"]["split_words"], generation["result"]["split_tokens"]
 
         frames = [p["most_attended_frames"][0] for p in pr]
-        if self.unicode_buffer != []:
-            a = [frames[0]] * len(self.unicode_buffer)
+        if frames and self.frame_buffer:
+            a = [frames[0]] * self.frame_buffer #Buffer generation["result"] if timestamp accuracy becomes problem
             frames = a + frames
+            self.frame_buffer = 0
             
         tokens = tokens.copy()
         ret = []
@@ -196,6 +198,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         if tokens == []:
             return tokens #To preserve unicode_buffer
         tokens = self.unicode_buffer + tokens #Add previous buffered token
+        self.frame_buffer = len(self.unicode_buffer)
         self.unicode_buffer = []
         decoded_str_bytes = self.model.tokenizer.encoding.decode_bytes_batch(
                 [[t] for t in tokens] #Split bytes on token
