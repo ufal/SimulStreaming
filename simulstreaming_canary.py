@@ -15,7 +15,10 @@ import torch
 from omegaconf import OmegaConf, open_dict
 from torch.utils.data import DataLoader
 
-from nemo.collections.asr.models.aed_multitask_models import lens_to_mask
+from nemo.collections.asr.models.aed_multitask_models import (
+    lens_to_mask,
+    parse_multitask_prompt
+)
 from nemo.collections.asr.parts.submodules.aed_decoding import (
     GreedyBatchedStreamingAEDComputer,
     return_decoder_input_ids,
@@ -39,206 +42,16 @@ from nemo.collections.asr.models.aed_multitask_models import MultiTaskTranscript
 from whisper_streaming.base import OnlineProcessorInterface
 import logging
 
+BOW_PREFIX = "\u2581"
+
 logger = logging.getLogger(__name__)
 
-@dataclass
-class IncrementalOutput:
-    new_tokens: List[str]
-    new_string: str
-    deleted_tokens: List[str]
-    deleted_string: str
+def flatten_list(list):
+    flattened =[]
+    for chunk in list:
+        flattened.extend(chunk)
 
-class PunctuationTextHistory:
-    STRONG_PUNCTUATION = [".", "!", "?", ":", ";"]
-
-    def select_text_history(self, text_history):
-        new_history = []
-        for token in reversed(text_history):
-            prefix_token = token
-            contains_punctuation = False
-            for punct in self.STRONG_PUNCTUATION:
-                if punct in prefix_token:
-                    contains_punctuation = True
-                    break
-            if contains_punctuation:
-                break
-            new_history.append(token)
-        # Reverse the list
-        return new_history[::-1]
-
-class StreamAttProcessor:
-    def __init__(self, asr, stream_cfg, multitask_transcription_conf):
-        self.asr = asr
-        self.model = asr.model
-        self.device = asr.device
-        self.cfg = stream_cfg
-        self.punct_history = PunctuationTextHistory()
-        self.audio_subsampling_factor = self.cfg.audio_subsampling_factor
-        self.text_history_max_len = self.cfg.text_history_max_len
-        self.cutoff_frame_num = self.cfg.cutoff_frame_num
-        self.cross_attn_layer = self.cfg.cross_attn_layer
-        self.unselected_tokens = []
-        self.audio_history_max_duration = self.cfg.audio_history_max_duration
-        self.audio_max_len = self.audio_history_max_duration * 1000 // 10 // self.audio_subsampling_factor
-
-        self.multitask_transcription_conf = multitask_transcription_conf
-
-        #histories
-        self.audio_history: Optional[np.ndarray] = None
-        self.text_history: List[str] = []
-        self.unselected_tokens: List[str] = []
-
-    def _update_text_history(self, new_output: List[str]) -> int:
-        if self.text_history:
-            self.text_history += new_output
-        else:
-            self.text_history = new_output
-        new_history = self.punct_history.select_text_history(self.text_history)
-        discarded_text = len(self.text_history) - len(new_history)
-        self.text_history = new_history
-
-        # Ensure not exceeding max text history length
-        if self.text_history and len(self.text_history) > self.text_history_max_len:
-            if logger.isEnabledFor(logging.WARNING):
-                logger.warning(
-                    f"The textual history has hit the maximum predefined length of "
-                    f"{self.text_history_max_len}")
-            self.text_history = self.text_history[-self.text_history_max_len:]
-        return discarded_text
-
-    def _cut_audio_exceeding_maxlen(self):
-        # Ensure not exceeding max audio history length
-        if len(self.audio_history) > self.audio_max_len:
-            if logger.isEnabledFor(logging.WARNING):
-                logger.warning(
-                    f"The audio history has hit the maximum predefined length of "
-                    f"{self.audio_max_len}")
-            self.audio_history = self.audio_history[-self.audio_max_len:]
-
-    def _update_speech_history(self, discarded_text: int, cross_attn: torch.Tensor) -> None:
-        # If no history is discarded, no need for attention-based audio trimming
-        if discarded_text == 0:
-            # Check audio history not exceeding maximum allowed length
-            self._cut_audio_exceeding_maxlen()
-            return
-
-        # Trim the cross-attention by excluding the discarded new generated tokens and the
-        # discarded textual history. Output shape: (text_history_len, n_audio_features)
-        cross_attn = cross_attn[discarded_text:discarded_text + len(self.text_history), :]
-
-        # Compute the frame to which each token of the textual history mostly attends to
-        most_attended_idxs = torch.argmax(cross_attn.float(), dim=1)
-
-        # Find the first feature that is attended
-        if most_attended_idxs.shape[0] > 1:
-            # Multiple tokens: sort and get the earliest attended frame
-            sorted_idxs = torch.sort(most_attended_idxs)[0]
-            earliest_attended_idx = sorted_idxs[0]
-        else:
-            # Only one token: use the unique most attended frame
-            earliest_attended_idx = most_attended_idxs[0]
-
-        # Multiply by the subsampling factor to recover the original number of frames
-        frames_to_cut = earliest_attended_idx * self.audio_subsampling_factor
-
-        # Cut the unattended audio features
-        self.audio_history = self.audio_history[frames_to_cut:]
-
-        # Check audio history not exceeding maximum allowed length
-        self._cut_audio_exceeding_maxlen()
-
-    def alignatt_policy(self, generated_tokens, cross_attn) -> List[str]:
-        """
-        Apply the AlignAtt policy by cutting off tokens whose attention falls
-        beyond the allowed frame range.
-        The AlignAtt policy was introduced in:
-            S. Papi, et al. 2023. *"AlignAtt: Using Attention-based Audio-Translation
-            Alignments as a Guide for Simultaneous Speech Translation"*
-            (https://www.isca-archive.org/interspeech_2023/papi23_interspeech.html)
-        """
-        # Select attention scores corresponding to the new generated tokens
-        cross_attn = cross_attn[-len(generated_tokens):, :]
-        selected_tokens = generated_tokens
-
-        # Find the frame to which each token mostly attends to
-        most_attended_frames = torch.argmax(cross_attn, dim=1)
-        cutoff = cross_attn.size(1) - self.cutoff_frame_num
-
-        # Find the first token that attends beyond the cutoff frame
-        invalid_tok_ids = torch.where(most_attended_frames >= cutoff)[0]
-
-        # Truncate tokens up to the first invalid alignment (if any)
-        if len(invalid_tok_ids) > 0:
-            selected_tokens = selected_tokens[:invalid_tok_ids[0]]
-
-        # Store unselected tokens, to be used in the case of end of stream
-        self.unselected_tokens = generated_tokens[len(selected_tokens):]
-
-        return selected_tokens
-
-    def tokens_to_string(self, tokens: List[str]) -> str:
-        if not tokens:
-            return ""
-        s = ""
-        for tok in tokens:
-                s += tok
-        return s.strip()
-
-    def _build_incremental_outputs(self, generated_tokens: List[str]) -> IncrementalOutput:
-        return IncrementalOutput(
-            new_tokens=generated_tokens,
-            new_string=self.tokens_to_string(generated_tokens),
-            deleted_tokens=[],
-            deleted_string="",
-        )
-
-    def process_chunk(self, speech: np.ndarray) -> IncrementalOutput:
-        if self.audio_history is not None:
-            self.audio_history = np.concatenate((self.audio_history, speech), axis=0)
-        else:
-            self.audio_history = speech
-
-        new_speech = torch.from_numpy(self.audio_history).to(self.device)
-        # Generate new hypothesis with its corresponding cross-attention scores (no prefix)
-        generated_tokens, cross_attn = self._generate(new_speech)
-        # Select the part of the new hypothesis to be emitted, and trim cross-attention accordingly
-        selected_output = self.alignatt_policy(generated_tokens, cross_attn)
-        incremental_output = self._build_incremental_outputs(selected_output)
-        # Discard textual history, if needed
-        discarded_text = self._update_text_history(selected_output)
-        # Trim audio corresponding to the discarded textual history
-        self._update_speech_history(discarded_text, cross_attn)
-        return incremental_output
-
-    def end_of_stream(self) -> IncrementalOutput:
-        last_output = self._build_incremental_outputs(self.unselected_tokens)
-        self.unselected_tokens = []
-        return last_output
-
-    def clear(self) -> None:
-        self.text_history = None
-        self.audio_history = None
-        self.unselected_tokens = []
-    
-    def _generate(self, speech: torch.Tensor) -> Tuple[List[str], torch.Tensor]:
-        new_hypothesis = self.model.transcribe(
-            speech, 
-            override_config=self.multitask_transcription_conf
-        )
-
-        return new_hypothesis[0].words, new_hypothesis[0].xatt_scores[self.cross_attn_layer]
-
-@dataclass
-class StreamAttConfig:
-    """
-    Configuration of the StreamAtt policy.
-    """
-    
-    audio_subsampling_factor: int = 1
-    cutoff_frame_num: int = 2
-    text_history_max_len: int = 128
-    cross_attn_layer: int = -2
-    audio_history_max_duration: int = 360
+    return flattened
 
 @dataclass
 class TranscriptionConfig:
@@ -304,18 +117,17 @@ def simul_asr_factory(args):
     base_cfg = OmegaConf.structured(TranscriptionConfig)
     overrides = OmegaConf.from_dotlist(args.canary_cfg)
     cfg = OmegaConf.merge(base_cfg, overrides)
-    stream_cfg = OmegaConf.structured(StreamAttConfig)
 
     if cfg.model_path is None and cfg.pretrained_name is None:
         raise ValueError("Both model_path and pretrained_name cannot be None!")
     
     logger.info("Model config:\n%s", OmegaConf.to_yaml(cfg))
 
-    asr = SimulCanaryASR(cfg, stream_cfg)
+    asr = SimulCanaryASR(cfg)
     return asr, SimulCanaryOnline(asr)
 
 class SimulCanaryASR:
-    def __init__(self, cfg: TranscriptionConfig, stream_cfg: StreamAttConfig):
+    def __init__(self, cfg: TranscriptionConfig):
         self.cfg = cfg
 
         map_location = get_inference_device(cuda=cfg.cuda, allow_mps=cfg.allow_mps)
@@ -344,6 +156,7 @@ class SimulCanaryASR:
         if hasattr(self.model, 'change_decoding_strategy'):
             multitask_decoding = MultiTaskDecodingConfig()
             multitask_decoding.strategy = "beam"
+            multitask_decoding.compute_hypothesis_token_set = True
             multitask_decoding.return_xattn_scores = True
             multitask_decoding.beam.beam_size = 5
             self.model.change_decoding_strategy(multitask_decoding)
@@ -357,17 +170,46 @@ class SimulCanaryASR:
             batch_size=self.cfg.batch_size,
             return_hypotheses=self.cfg.return_hypotheses,
             verbose=False,
-            prompt={'source_lang': 'en', 'target_lang': 'en'},
             enable_chunking=self.cfg.enable_chunking,
         )
-
-        self.stream_cfg = stream_cfg
-
-        self.decoder_input_ids = return_decoder_input_ids(self.cfg, self.model)
 
     def warmup(self, audio):
         """TODO: test. For now not needed"""
         pass
+
+    def construct_prompt(self, context, prefix):
+        """
+        Build input prompt and return decoder_input_ids
+        """
+
+        default_turns = self.model.prompt.get_default_dialog_slots()
+        default_slots = copy.deepcopy(default_turns[0]["slots"])
+        default_slots["decodercontext"] = self.model.tokenizer.ids_to_text(context)
+        default_slots["source_lang"] = getattr(self.multitask_transcription_conf, "source_lang", "en")
+        default_slots["target_lang"] = getattr(self.multitask_transcription_conf, "target_lang", "en")
+        default_slots["task"] = getattr(self.multitask_transcription_conf, "task", "asr")
+
+        # Build the prompt
+        turns = [
+            {
+                "role": "user", "slots": default_slots
+            },
+            {
+                "role": "user_prefix",
+                "slots": {
+                    "prefix": f"{self.model.tokenizer.ids_to_text(prefix)}"
+                },
+            },
+        ]
+
+        # Make a copy of the transcription config and set its prompt field
+        cfg_copy = copy.deepcopy(self.multitask_transcription_conf)
+        cfg_copy.turns = turns
+
+        encoded = self.model.prompt.encode_dialog(turns=turns)
+        decoder_input_ids = encoded["context_ids"].unsqueeze(0).to(self.device)
+
+        return cfg_copy, decoder_input_ids
 
 class SimulCanaryOnline(OnlineProcessorInterface):
     def __init__(self, asr: SimulCanaryASR):
@@ -377,16 +219,19 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         self.device = asr.device
         self.eos_token_id = self.model.tokenizer.eos_id
         self._init_stream_state()
-        self.processor = StreamAttProcessor(
-            asr, 
-            self.asr.stream_cfg,
-            self.asr.multitask_transcription_conf    
-        )
+        self.xatt_layer = -2 # Layer to take cross-attention from
+        self.cutoff_frame_num = 8 # Alignatt frame threshhold
+        self.context_buffer = []
+        self.output_history = []
+        self.max_history_len = 15 # Chunks remembered for the audio
+        self.max_context_len = 128 # Maximum len of words in context
 
     def init(self):
         self._init_stream_state()
 
     def _init_stream_state(self):
+        self.context_buffer = []
+        self.output_history = []
         self.audio_chunks = []
 
     def insert_audio_chunk(self, audio):
@@ -401,19 +246,110 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         
         return np.concatenate(self.audio_chunks, axis=0)
 
+    def normalize_attn(self, attn):
+        """
+        Normalize the cross-attention scores along the frame dimension to avoid attention sinks.
+        """
+        std = attn.std(axis=0)
+        std[std == 0.] = 1.0
+        mean = attn.mean(axis=0)
+        return (attn - mean) / std
+
+    def update_history(self, output):
+        if output is not None and len(output) > 0:
+            self.output_history.append(output)
+
+        if(len(self.audio_chunks) > self.max_history_len):
+            self.context_buffer.append(self.output_history.pop(0))
+            self.audio_chunks.pop(0)
+
+        total_context_len = sum(len(chunk) for chunk in self.context_buffer)
+        while total_context_len > self.max_context_len:
+            removed = self.context_buffer.pop(0)
+            total_context_len -= len(removed)
+
+    def _strip_incomplete_words(self, tokens: List[str]) -> List[str]:
+        """
+        Remove last incomplete word(s) from the new hypothesis.
+
+        Args:
+            tokens (List[str]): selected tokens, possibly containing partial words to be removed.
+
+        Returns:
+            List[str]: A list of generated tokens from which partial words are removed.
+        """
+        tokens_to_write = []
+        # iterate from the end and count how many trailing tokens to drop
+        num_tokens_incomplete = 0
+        for tok in reversed(tokens):
+            num_tokens_incomplete += 1
+            if tok.startswith(BOW_PREFIX):
+                # slice off the trailing incomplete tokens
+                tokens_to_write = tokens[:-num_tokens_incomplete]
+                break
+        return tokens_to_write
+
+    def alignatt_policy(self, generated_tokens, cross_attn) -> List[str]:
+        """
+        Apply the AlignAtt policy by cutting off tokens whose attention falls
+        beyond the allowed frame range.
+        The AlignAtt policy was introduced in:
+            S. Papi, et al. 2023. *"AlignAtt: Using Attention-based Audio-Translation
+            Alignments as a Guide for Simultaneous Speech Translation"*
+            (https://www.isca-archive.org/interspeech_2023/papi23_interspeech.html)
+        """
+        # Select attention scores corresponding to the new generated tokens
+        cross_attn = cross_attn[-len(generated_tokens):, :]
+        selected_tokens = generated_tokens
+
+        # Find the frame to which each token mostly attends to
+        most_attended_frames = torch.argmax(cross_attn, dim=1)
+        cutoff = cross_attn.size(1) - self.cutoff_frame_num
+
+        # Find the first token that attends beyond the cutoff frame
+        invalid_tok_ids = torch.where(most_attended_frames >= cutoff)[0]
+
+        # Truncate tokens up to the first invalid alignment (if any)
+        if len(invalid_tok_ids) > 0:
+            selected_tokens = selected_tokens[:invalid_tok_ids[0]]
+
+        selected_tokens = self._strip_incomplete_words(selected_tokens)
+
+        # Store unselected tokens, to be used in the case of end of stream
+        self.unselected_tokens = generated_tokens[len(selected_tokens):]
+
+        return selected_tokens
+
     def process_iter(self):
         speech = self._concat_audio_chunks()
-        
-        output = self.processor.process_chunk(speech)
 
-        # reset audio_chunks accumulator
-        self.audio_chunks = []
+        flattened_history = flatten_list(self.output_history)
+        flattened_context = flatten_list(self.context_buffer)
+
+        override_config, decoder_input_ids = self.asr.construct_prompt(
+            context=flattened_context,
+            prefix=flattened_history
+        )
+
+        output = self.model.transcribe(speech, override_config=override_config)
+
+        generated_tokens = output[0].y_sequence
+        if isinstance(generated_tokens, torch.Tensor):
+            generated_tokens = generated_tokens.detach().cpu().tolist()
+        
+        xatt_raw = output[0].xatt_scores[self.xatt_layer][:, :decoder_input_ids.shape[1] + len(generated_tokens), :]
+        xatt_mean = xatt_raw.mean(dim=0)
+        xatt_norm = self.normalize_attn(xatt_mean)
+
+        selected_output = self.alignatt_policy(generated_tokens, xatt_norm)
+
+        self.update_history(selected_output)
 
         return {
             "start": 0,
             "end": 0,
-            "text": output.new_string,
-            "tokens": output.new_tokens,
+            "text": generated_text,
+            "tokens": output[0].tokens,
         }
 
     def finish(self):
