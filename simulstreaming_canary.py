@@ -140,18 +140,6 @@ class SimulCanaryASR:
         self.device = self.model.device
         self.dtype = get_inference_dtype(cfg.compute_dtype, device=self.device)
 
-        # some changes for streaming scenario
-        model_cfg = copy.deepcopy(self.model._cfg)
-        with open_dict(model_cfg):
-            model_cfg.preprocessor.dither = 0.0
-            model_cfg.preprocessor.pad_to = 0
-
-        self.model_cfg = model_cfg
-
-        self.model.freeze()
-        self.model.to(self.device)
-        self.model.to(self.dtype)
-
         # Setup decoding strategy
         if hasattr(self.model, 'change_decoding_strategy'):
             multitask_decoding = MultiTaskDecodingConfig()
@@ -160,10 +148,6 @@ class SimulCanaryASR:
             multitask_decoding.return_xattn_scores = True
             multitask_decoding.beam.beam_size = 5
             self.model.change_decoding_strategy(multitask_decoding)
-
-        self.model.preprocessor.featurizer.dither = 0.0
-        self.model.preprocessor.featurizer.pad_to = 0
-        self.model.eval()
 
         #override default transcribe values with this
         self.multitask_transcription_conf = MultiTaskTranscriptionConfig(
@@ -189,7 +173,7 @@ class SimulCanaryASR:
         default_slots["target_lang"] = getattr(self.multitask_transcription_conf, "target_lang", "en")
         default_slots["task"] = getattr(self.multitask_transcription_conf, "task", "asr")
 
-        # Build the prompt
+        # Build the turns
         turns = [
             {
                 "role": "user", "slots": default_slots
@@ -202,9 +186,13 @@ class SimulCanaryASR:
             },
         ]
 
+        # The model's output does not work properly when simply setting "turns = turns" in the
+        # override_config. So we have to parse the prompt
+        prompt_list = parse_multitask_prompt({"turns": turns})
+
         # Make a copy of the transcription config and set its prompt field
         cfg_copy = copy.deepcopy(self.multitask_transcription_conf)
-        cfg_copy.turns = turns
+        cfg_copy.prompt = prompt_list
 
         encoded = self.model.prompt.encode_dialog(turns=turns)
         decoder_input_ids = encoded["context_ids"].unsqueeze(0).to(self.device)
@@ -220,10 +208,10 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         self.eos_token_id = self.model.tokenizer.eos_id
         self._init_stream_state()
         self.xatt_layer = -2 # Layer to take cross-attention from
-        self.cutoff_frame_num = 8 # Alignatt frame threshhold
+        self.cutoff_frame_num = 4 # Alignatt frame threshhold
         self.context_buffer = []
         self.output_history = []
-        self.max_history_len = 15 # Chunks remembered for the audio
+        self.max_history_len = 16 # Chunks remembered for the audio
         self.max_context_len = 128 # Maximum len of words in context
 
     def init(self):
@@ -331,6 +319,8 @@ class SimulCanaryOnline(OnlineProcessorInterface):
             prefix=flattened_history
         )
 
+        logger.debug(f"{self.model.tokenizer.ids_to_text(decoder_input_ids)=}")
+
         output = self.model.transcribe(speech, override_config=override_config)
 
         generated_tokens = output[0].y_sequence
@@ -341,14 +331,14 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         xatt_mean = xatt_raw.mean(dim=0)
         xatt_norm = self.normalize_attn(xatt_mean)
 
-        selected_output = self.alignatt_policy(generated_tokens, xatt_norm)
+        selected_output = self.alignatt_policy(output[0].tokens, xatt_norm)
 
-        self.update_history(selected_output)
+        self.update_history(generated_tokens[:len(selected_output)])
 
         return {
             "start": 0,
             "end": 0,
-            "text": generated_text,
+            "text": self.model.tokenizer.ids_to_text(generated_tokens[:len(selected_output)]),
             "tokens": output[0].tokens,
         }
 
