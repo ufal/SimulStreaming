@@ -8,41 +8,22 @@ import argparse
 from dataclasses import dataclass, field, is_dataclass, fields
 from typing import Optional, List, Tuple
 
+
 import numpy as np
-
-import lightning.pytorch as pl
 import torch
-from omegaconf import OmegaConf, open_dict
-from torch.utils.data import DataLoader
 
-from nemo.collections.asr.models.aed_multitask_models import (
-    lens_to_mask,
-    parse_multitask_prompt
-)
-from nemo.collections.asr.parts.submodules.aed_decoding import (
-    GreedyBatchedStreamingAEDComputer,
-    return_decoder_input_ids,
-)
-from nemo.collections.asr.parts.submodules.multitask_decoding import (
-    AEDStreamingDecodingConfig,
-    MultiTaskDecodingConfig,
-)
-from nemo.collections.asr.parts.utils.streaming_utils import (
-    ContextSize,
-    StreamingBatchedAudioBuffer,
-)
-from nemo.collections.asr.parts.utils.transcribe_utils import (
-    get_inference_device,
-    get_inference_dtype,
-    setup_model,
-)
+
+from nemo.collections.asr.models import ASRModel
+from nemo.collections.asr.models.aed_multitask_models import parse_multitask_prompt
+from nemo.collections.asr.parts.submodules.multitask_decoding import MultiTaskDecodingConfig
 from nemo.collections.asr.models.aed_multitask_models import MultiTaskTranscriptionConfig
-
-
 from whisper_streaming.base import OnlineProcessorInterface
+
+
 import logging
 
 BOW_PREFIX = "\u2581"
+CANARY_PRETRAINED_NAME = "nvidia/canary-1b-v2"
 
 logger = logging.getLogger(__name__)
 
@@ -54,111 +35,95 @@ def flatten_list(list):
     return flattened
 
 @dataclass
-class TranscriptionConfig:
-    """
-    Transcription Configuration for canary's inference.
-    """
-
-    # Required configs
-    model_path: Optional[str] = None  # Path to a .nemo file
-    pretrained_name: Optional[str] = 'nvidia/canary-1b-v2'  # Name of a pretrained model
-
-    # General configs
-    batch_size: int = 1 # Single clint connection
-
-    cuda: Optional[int] = None
-    allow_mps: bool = True
-    compute_dtype: Optional[str] = (
-        None  # "float32", "bfloat16" or "float16"; if None (default): bfloat16 if available, else float32
-    )
-
-    matmul_precision: str = 'high'
-
-    # Decoding strategy for RNNT models
-    decoding: AEDStreamingDecodingConfig = field(default_factory=AEDStreamingDecodingConfig)
-
-    # extra arguments for Canary prompt generation
-    timestamps: bool = False
-    prompt: dict = field(default_factory=dict)
-
-    # debug mode
-    debug_mode: bool = False
-
-    return_hypotheses: bool = True
-    enable_chunking: bool = False
-
-def canary_cfg_options(cls, prefix=""):
-    """
-    Helper function to get the Canary's available options 
-    """
-
-    options = []
-    for f in fields(cls):
-        name = f"{prefix}{f.name}"
-
-        if is_dataclass(f.type):
-            options.extend(canary_cfg_options(f.type, prefix=name + "."))
-        else:
-            options.append(f"{name} ({f.type.__name__})")
-    return options
+class StreamingConfig:
+    audio_max_len: int
+    frame_threshold: int
+    max_context_len: int
+    xatt_layer: int = -2 # Layer to take cross attentions from
 
 def simulcanary_args(parser: argparse.ArgumentParser):
-    options = canary_cfg_options(TranscriptionConfig)
+    group = parser.add_argument_group('Canary-v2 arguments')
+    group.add_argument('--model_path', type=str, default=None, 
+                        help='The file path to the Canary .pt model. If not present on the filesystem, the model is downloaded automatically. Does not download twice')
+    group.add_argument("--beams","-b", type=int, default=1, help="Number of beams for beam search decoding. If 1, greedy is used.")
+    group.add_argument("--decoder",type=str, choices=["beam", "greedy"], default=None, help="Override automatic selection of beam or greedy decoder. "
+                        "If beams > 1 and greedy: invalid.")
 
-    parser.add_argument("--canary_cfg", nargs="*", default=[], metavar="KEY=VALUE",
-                        help=("List of canary model specific arguments \n:"
-                              "Options: \n" + "\n ".join(options)
-                              ),
-                        )
+    group = parser.add_argument_group('Audio buffer')
+    group.add_argument('--audio_max_len', type=float, default=30.0, 
+        help='Max length of the audio buffer, in seconds.')
+    group.add_argument('--max_context_len', type=float, default=256, 
+        help='Max context length in tokens for the decoder')
+
+    group = parser.add_argument_group('AlignAtt argument')
+    group.add_argument('--frame_threshold', type=int, default=4, 
+        help='Threshold for the attention-guided decoding. The AlignAtt policy will decode only ' \
+            'until this number of encoder frames from the end of audio. In frames: in one second of 16kHz input there is ceil(16000 / 16000*0.01 / 8) = 13 frames.')
+
+    group = parser.add_argument_group('Prompt and context')
+    group.add_argument('--source_lang', type=str, default="en", help='Source language of the input.')
+    group.add_argument('--target_lang', type=str, default="en", help='Target language of the output.')
 
 def simul_asr_factory(args):
     logger.setLevel(args.log_level)
+    decoder = args.decoder
 
-    base_cfg = OmegaConf.structured(TranscriptionConfig)
-    overrides = OmegaConf.from_dotlist(args.canary_cfg)
-    cfg = OmegaConf.merge(base_cfg, overrides)
-
-    if cfg.model_path is None and cfg.pretrained_name is None:
-        raise ValueError("Both model_path and pretrained_name cannot be None!")
+    if args.beams > 1:
+            if decoder == "greedy":
+                raise ValueError("Invalid 'greedy' decoder type for beams > 1. Use 'beam'.")
+            elif decoder is None or decoder == "beam":
+                decoder = "beam"
+    else:
+        if decoder is None:
+            decoder = "greedy"
+        elif decoder not in ("beam","greedy"):
+            raise ValueError("Invalid decoder type. Use 'beam' or 'greedy'.")
     
-    logger.info("Model config:\n%s", OmegaConf.to_yaml(cfg))
+    a = { v:getattr(args, v) for v in ["model_path", "decoder", "frame_threshold", "max_context_len", "audio_max_len", "beams", "task",
+                                        'source_lang', 'target_lang'
+                                       ]}
 
-    asr = SimulCanaryASR(cfg)
+    a["decoder"] = decoder
+    asr = SimulCanaryASR(**a)
     return asr, SimulCanaryOnline(asr)
 
 class SimulCanaryASR:
-    def __init__(self, cfg: TranscriptionConfig):
-        self.cfg = cfg
+    def __init__(self, model_path, decoder, frame_threshold, max_context_len, audio_max_len, beams, task, source_lang, target_lang):
+        if model_path is not None:
+            self.model = ASRModel.restore_from(restore_path=model_path)
+        else:
+            self.model = ASRModel.from_pretrained(model_name=CANARY_PRETRAINED_NAME)
 
-        map_location = get_inference_device(cuda=cfg.cuda, allow_mps=cfg.allow_mps)
-        compute_dtype = get_inference_dtype(cfg.compute_dtype, device=map_location)
-        logger.info(f"Inference will be done on device : {map_location} with compute_dtype: {compute_dtype}")
-
-        # setup ASR model
-        self.model, _ = setup_model(cfg, map_location)
-
-        self.device = self.model.device
-        self.dtype = get_inference_dtype(cfg.compute_dtype, device=self.device)
+        self.device = next(self.model.parameters()).device
 
         # Setup decoding strategy
         if hasattr(self.model, 'change_decoding_strategy'):
             multitask_decoding = MultiTaskDecodingConfig()
-            multitask_decoding.strategy = "beam"
+            multitask_decoding.strategy = decoder
             multitask_decoding.compute_hypothesis_token_set = True
             multitask_decoding.return_xattn_scores = True
-            multitask_decoding.beam.beam_size = 5
+            multitask_decoding.beam.beam_size = beams
             self.model.change_decoding_strategy(multitask_decoding)
 
         #override default transcribe values with this
         self.multitask_transcription_conf = MultiTaskTranscriptionConfig(
-            batch_size=self.cfg.batch_size,
-            return_hypotheses=self.cfg.return_hypotheses,
+            batch_size=1, # Batch size is one, one input stream per connection
+            return_hypotheses=True, # return Hypothesis class
             verbose=False,
-            enable_chunking=self.cfg.enable_chunking,
+            enable_chunking=False, # Disable chunking because we need cross-attention scores
+        )
+
+        self.default_prompt = {'source_lang': source_lang, 'target_lang': target_lang, 'task': task}
+
+        self.cfg = StreamingConfig(
+            audio_max_len=audio_max_len,
+            frame_threshold=frame_threshold,
+            max_context_len=max_context_len,
+            xatt_layer=self.model.cfg.decoding.get("xatt_scores_layer", -2),
         )
 
     def warmup(self, audio):
-        """TODO: test. For now not needed"""
+        """TODO: Implemnet."""
         pass
 
     def construct_prompt(self, context, prefix):
@@ -169,9 +134,9 @@ class SimulCanaryASR:
         default_turns = self.model.prompt.get_default_dialog_slots()
         default_slots = copy.deepcopy(default_turns[0]["slots"])
         default_slots["decodercontext"] = self.model.tokenizer.ids_to_text(context)
-        default_slots["source_lang"] = getattr(self.multitask_transcription_conf, "source_lang", "en")
-        default_slots["target_lang"] = getattr(self.multitask_transcription_conf, "target_lang", "en")
-        default_slots["task"] = getattr(self.multitask_transcription_conf, "task", "asr")
+        default_slots["source_lang"] = self.default_prompt['source_lang']
+        default_slots["target_lang"] = self.default_prompt['target_lang']
+        default_slots["task"] = self.default_prompt['task']
 
         # Build the turns
         turns = [
@@ -204,15 +169,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         self.asr = asr
         self.model = asr.model
         self.cfg = asr.cfg
-        self.device = asr.device
-        self.eos_token_id = self.model.tokenizer.eos_id
         self._init_stream_state()
-        self.xatt_layer = -2 # Layer to take cross-attention from
-        self.cutoff_frame_num = 4 # Alignatt frame threshhold
-        self.context_buffer = []
-        self.output_history = []
-        self.max_history_len = 16 # Chunks remembered for the audio
-        self.max_context_len = 128 # Maximum len of words in context
 
     def init(self):
         self._init_stream_state()
@@ -234,7 +191,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         
         return np.concatenate(self.audio_chunks, axis=0)
 
-    def normalize_attn(self, attn):
+    def normalize_attn(self, attn: torch.Tensor):
         """
         Normalize the cross-attention scores along the frame dimension to avoid attention sinks.
         """
@@ -243,28 +200,26 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         mean = attn.mean(axis=0)
         return (attn - mean) / std
 
-    def update_history(self, output):
+    def update_history(self, output: List[int]):
+        """
+        Update audio history based on the audio_max_len. Push previous output to the output history.
+        """
+
         if output is not None and len(output) > 0:
             self.output_history.append(output)
 
-        if(len(self.audio_chunks) > self.max_history_len):
+        if(len(self.audio_chunks) > self.cfg.audio_max_len):
             self.context_buffer.append(self.output_history.pop(0))
             self.audio_chunks.pop(0)
 
         total_context_len = sum(len(chunk) for chunk in self.context_buffer)
-        while total_context_len > self.max_context_len:
+        while total_context_len > self.cfg.max_context_len:
             removed = self.context_buffer.pop(0)
             total_context_len -= len(removed)
 
     def _strip_incomplete_words(self, tokens: List[str]) -> List[str]:
         """
         Remove last incomplete word(s) from the new hypothesis.
-
-        Args:
-            tokens (List[str]): selected tokens, possibly containing partial words to be removed.
-
-        Returns:
-            List[str]: A list of generated tokens from which partial words are removed.
         """
         tokens_to_write = []
         # iterate from the end and count how many trailing tokens to drop
@@ -292,7 +247,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
 
         # Find the frame to which each token mostly attends to
         most_attended_frames = torch.argmax(cross_attn, dim=1)
-        cutoff = cross_attn.size(1) - self.cutoff_frame_num
+        cutoff = cross_attn.size(1) - self.cfg.frame_threshold
 
         # Find the first token that attends beyond the cutoff frame
         invalid_tok_ids = torch.where(most_attended_frames >= cutoff)[0]
@@ -302,9 +257,6 @@ class SimulCanaryOnline(OnlineProcessorInterface):
             selected_tokens = selected_tokens[:invalid_tok_ids[0]]
 
         selected_tokens = self._strip_incomplete_words(selected_tokens)
-
-        # Store unselected tokens, to be used in the case of end of stream
-        self.unselected_tokens = generated_tokens[len(selected_tokens):]
 
         return selected_tokens
 
@@ -319,15 +271,13 @@ class SimulCanaryOnline(OnlineProcessorInterface):
             prefix=flattened_history
         )
 
-        logger.debug(f"{self.model.tokenizer.ids_to_text(decoder_input_ids)=}")
-
         output = self.model.transcribe(speech, override_config=override_config)
 
         generated_tokens = output[0].y_sequence
         if isinstance(generated_tokens, torch.Tensor):
             generated_tokens = generated_tokens.detach().cpu().tolist()
         
-        xatt_raw = output[0].xatt_scores[self.xatt_layer][:, :decoder_input_ids.shape[1] + len(generated_tokens), :]
+        xatt_raw = output[0].xatt_scores[self.cfg.xatt_layer][:, :decoder_input_ids.shape[1] + len(generated_tokens), :]
         xatt_mean = xatt_raw.mean(dim=0)
         xatt_norm = self.normalize_attn(xatt_mean)
 
@@ -339,7 +289,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
             "start": 0,
             "end": 0,
             "text": self.model.tokenizer.ids_to_text(generated_tokens[:len(selected_output)]),
-            "tokens": output[0].tokens,
+            "tokens": generated_tokens[:len(selected_output)],
         }
 
     def finish(self):
@@ -349,3 +299,8 @@ class SimulCanaryOnline(OnlineProcessorInterface):
 
         self._init_stream_state()
         return o
+
+if __name__ == "__main__":
+
+    from whisper_streaming.whisper_online_main import main_simulation_from_file
+    main_simulation_from_file(simul_asr_factory, add_args=simulcanary_args)
