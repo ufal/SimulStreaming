@@ -95,6 +95,7 @@ class SimulCanaryASR:
             self.model = ASRModel.from_pretrained(model_name=CANARY_PRETRAINED_NAME)
 
         self.device = next(self.model.parameters()).device
+        self.sample_rate = self.model.cfg.preprocessor.sample_rate
 
         # Setup decoding strategy
         if hasattr(self.model, 'change_decoding_strategy'):
@@ -123,8 +124,7 @@ class SimulCanaryASR:
         )
 
     def warmup(self, audio):
-        """TODO: Implemnet."""
-        pass
+        self.model.transcribe(audio)
 
     def construct_prompt(self, context, prefix):
         """
@@ -170,8 +170,11 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         self.model = asr.model
         self.cfg = asr.cfg
         self._init_stream_state()
+        self.sample_rate = asr.sample_rate
 
-    def init(self):
+    # Discard offset
+    # Required for the timestapmps only
+    def init(self, offset=None):
         self._init_stream_state()
 
     def _init_stream_state(self):
@@ -208,9 +211,14 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         if output is not None and len(output) > 0:
             self.output_history.append(output)
 
-        if(len(self.audio_chunks) > self.cfg.audio_max_len):
+        total_audio_len = sum(len(audio_chunk) for audio_chunk in self.audio_chunks)
+        while (total_audio_len / self.sample_rate > self.cfg.audio_max_len and
+            self.audio_chunks and
+            self.output_history):
+
+            removed_chunk = self.audio_chunks.pop(0)
+            total_audio_len -= len(removed_chunk)
             self.context_buffer.append(self.output_history.pop(0))
-            self.audio_chunks.pop(0)
 
         total_context_len = sum(len(chunk) for chunk in self.context_buffer)
         while total_context_len > self.cfg.max_context_len:
