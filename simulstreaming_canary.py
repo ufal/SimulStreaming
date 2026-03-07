@@ -17,7 +17,7 @@ from nemo.collections.asr.models import ASRModel
 from nemo.collections.asr.models.aed_multitask_models import parse_multitask_prompt
 from nemo.collections.asr.parts.submodules.multitask_decoding import MultiTaskDecodingConfig
 from nemo.collections.asr.models.aed_multitask_models import MultiTaskTranscriptionConfig
-from whisper_streaming.base import OnlineProcessorInterface
+from simulstreaming.whisper.whisper_streaming.base import OnlineProcessorInterface
 
 
 import logging
@@ -110,8 +110,8 @@ class SimulCanaryASR:
         self.multitask_transcription_conf = MultiTaskTranscriptionConfig(
             batch_size=1, # Batch size is one, one input stream per connection
             return_hypotheses=True, # return Hypothesis class
-            verbose=False,
             enable_chunking=False, # Disable chunking because we need cross-attention scores
+            verbose=False,
         )
 
         self.default_prompt = {'source_lang': source_lang, 'target_lang': target_lang, 'task': task}
@@ -172,15 +172,14 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         self._init_stream_state()
         self.sample_rate = asr.sample_rate
 
-    # Discard offset
-    # Required for the timestapmps only
     def init(self, offset=None):
-        self._init_stream_state()
+        self._init_stream_state(offset=offset if offset is not None else 0.0)
 
-    def _init_stream_state(self):
+    def _init_stream_state(self, offset: float = 0.0):
         self.context_buffer = []
         self.output_history = []
         self.audio_chunks = []
+        self.audio_buffer_offset = offset
 
     def insert_audio_chunk(self, audio):
         if audio is None:
@@ -217,6 +216,9 @@ class SimulCanaryOnline(OnlineProcessorInterface):
             self.output_history):
 
             removed_chunk = self.audio_chunks.pop(0)
+
+            self.audio_buffer_offset += len(removed_chunk) / self.sample_rate
+            
             total_audio_len -= len(removed_chunk)
             self.context_buffer.append(self.output_history.pop(0))
 
@@ -268,6 +270,76 @@ class SimulCanaryOnline(OnlineProcessorInterface):
 
         return selected_tokens
 
+    def _group_tokens_into_words(
+        self,
+        token_strings: List[str],
+        token_ids: List[int],
+    ) -> List[List[int]]:
+        """
+        Group (token_string, token_id) pairs into words using BOW_PREFIX as a
+        word-boundary marker.  Returns a list whose i-th entry is the list of
+        token IDs that belong to the i-th word.
+
+        Example
+        -------
+        token_strings = ["▁Hello", "▁world", "!"]
+        → [[id_Hello], [id_world, id_!]]
+        """
+        words: List[List[int]] = []
+        current_ids: List[int] = []
+
+        for tok_str, tok_id in zip(token_strings, token_ids):
+            if tok_str.startswith(BOW_PREFIX):
+                # A BOW token starts a new word – flush the current one first.
+                if current_ids:
+                    words.append(current_ids)
+                current_ids = [tok_id]
+            else:
+                # Continuation token (punctuation, sub-word suffix, …)
+                current_ids.append(tok_id)
+
+        if current_ids:
+            words.append(current_ids)
+
+        return words
+
+    def _build_word_timestamps(
+        self,
+        token_strings: List[str],
+        token_ids: List[int],
+        canary_ts_words: List[dict],
+    ) -> List[dict]:
+        """
+        Merge the token grouping with Canary's word-level timestamp list.
+
+        Parameters
+        ----------
+        token_strings:
+            Decoded token strings for the *selected* tokens only.
+        token_ids:
+            Corresponding token IDs for the selected tokens.
+        canary_ts_words:
+            The timestamps word list produced by the model for.
+        """
+        word_token_groups = self._group_tokens_into_words(token_strings, token_ids)
+
+        # The number of words we can emit is limited by the shorter of the two
+        # lists: our token grouping may have fewer entries than canary_ts_words
+        n_words = min(len(word_token_groups), len(canary_ts_words))
+
+        result: List[dict] = []
+        for i in range(n_words):
+            ts = canary_ts_words[i]
+            result.append({
+                'start': ts['start'] + self.audio_buffer_offset,
+                'end':   ts['end']   + self.audio_buffer_offset,
+                'text':  ts['word'],
+                'tokens': word_token_groups[i],
+            })
+            logger.debug(f"TS-WORD-INFO: {result[-1]}")
+
+        return result
+
     def process_iter(self):
         speech = self._concat_audio_chunks()
 
@@ -279,7 +351,11 @@ class SimulCanaryOnline(OnlineProcessorInterface):
             prefix=flattened_history
         )
 
-        output = self.model.transcribe(speech, override_config=override_config)
+        output = self.model.transcribe(
+            speech,
+            timestamps=True,
+            override_config=override_config
+        )
 
         generated_tokens = output[0].y_sequence
         if isinstance(generated_tokens, torch.Tensor):
@@ -290,14 +366,34 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         xatt_norm = self.normalize_attn(xatt_mean)
 
         selected_output = self.alignatt_policy(output[0].tokens, xatt_norm)
+        selected_ids: List[int] = generated_tokens[:len(selected_output)]
 
-        self.update_history(generated_tokens[:len(selected_output)])
+        self.update_history(selected_ids)
+
+        # Combine timestamps
+        canary_ts_words: List[dict] = []
+        if output[0].timestamp and 'word' in output[0].timestamp:
+                    canary_ts_words = output[0].timestamp['word']
+
+        words = self._build_word_timestamps(
+            token_strings=selected_output,
+            token_ids=selected_ids,
+            canary_ts_words=canary_ts_words,
+        )
+
+        if words:
+            seg_start = words[0]['start']
+            seg_end   = words[-1]['end']
+        else:
+            seg_start = self.audio_buffer_offset
+            seg_end   = self.audio_buffer_offset
 
         return {
-            "start": 0,
-            "end": 0,
-            "text": self.model.tokenizer.ids_to_text(generated_tokens[:len(selected_output)]),
-            "tokens": generated_tokens[:len(selected_output)],
+            "start":  seg_start,
+            "end":    seg_end,
+            "text":   self.model.tokenizer.ids_to_text(selected_ids),
+            "tokens": selected_ids,
+            "words":  words,
         }
 
     def finish(self):
@@ -310,5 +406,5 @@ class SimulCanaryOnline(OnlineProcessorInterface):
 
 if __name__ == "__main__":
 
-    from whisper_streaming.whisper_online_main import main_simulation_from_file
+    from simulstreaming.whisper.whisper_streaming.whisper_online_main import main_simulation_from_file
     main_simulation_from_file(simul_asr_factory, add_args=simulcanary_args)
