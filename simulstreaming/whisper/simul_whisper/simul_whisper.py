@@ -15,7 +15,7 @@ from .beam import BeamPyTorchInference
 from .eow_detection import fire_at_boundary, load_cif
 import os
 
-from token_buffer import TokenBuffer
+from ..token_buffer import TokenBuffer
 
 import numpy as np
 from .generation_progress import *

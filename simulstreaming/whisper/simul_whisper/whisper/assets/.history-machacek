@@ -1,0 +1,6 @@
+_T=20250110_13:50:42_745767	 ls
+_T=20250110_13:50:44_745767	 ll
+_T=20250110_13:50:57_745767	 ll ../../new-whisper/assets/
+_T=20250110_13:51:10_745767	 cp ../../new-whisper/assets/mel_filters.npz .
+_T=20250507_15:42:49_3140062	 ls
+_T=20250507_15:43:00_3140062	 git add gpt2.tiktoken multilingual.tiktoken mel_filters.npz

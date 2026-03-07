@@ -1,49 +1,20 @@
 #!/usr/bin/env python3
-from whisper_streaming.whisper_online_main import *
+from .whisper_online_main import *
 
 import sys
 import argparse
 import os
 import logging
+import json
 import numpy as np
+import socket
 
 logger = logging.getLogger(__name__)
 
 SAMPLING_RATE = 16000
 
+from simulstreaming.utils.server_utils import Connection
 
-######### Server objects
-
-import whisper_streaming.line_packet as line_packet
-import socket
-
-class Connection:
-    '''it wraps conn object'''
-    PACKET_SIZE = 32000*5*60 # 5 minutes # was: 65536
-
-    def __init__(self, conn):
-        self.conn = conn
-        self.last_line = ""
-
-        self.conn.setblocking(True)
-
-    def send(self, line):
-        '''it doesn't send the same line twice, because it was problematic in online-text-flow-events'''
-        if line == self.last_line:
-            return
-        line_packet.send_one_line(self.conn, line)
-        self.last_line = line
-
-    def receive_lines(self):
-        in_line = line_packet.receive_lines(self.conn)
-        return in_line
-
-    def non_blocking_receive_audio(self):
-        try:
-            r = self.conn.recv(self.PACKET_SIZE)
-            return r
-        except ConnectionResetError:
-            return None
 
 import io
 import soundfile
@@ -52,10 +23,11 @@ import soundfile
 # next client should be served by a new instance of this object
 class ServerProcessor:
 
-    def __init__(self, c, online_asr_proc, min_chunk):
+    def __init__(self, c, online_asr_proc, min_chunk, out_txt: bool):
         self.connection = c
         self.online_asr_proc = online_asr_proc
         self.min_chunk = min_chunk
+        self.out_txt = out_txt
 
         self.is_first = True
 
@@ -88,7 +60,10 @@ class ServerProcessor:
         #    - beg and end timestamp of the text segment, as estimated by Whisper model. The timestamps are not accurate, but they're useful anyway
         # - the next words: segment transcript
         if iteration_output:
-            message = "%1.0f %1.0f %s" % (iteration_output['start'] * 1000, iteration_output['end'] * 1000, iteration_output['text'])
+            if self.out_txt:
+                message = "%1.0f %1.0f %s" % (iteration_output['start'] * 1000, iteration_output['end'] * 1000, iteration_output['text'])
+            else:
+                message = json.dumps(iteration_output)
             print(message, flush=True, file=sys.stderr)
             self.connection.send(message)
         else:
@@ -97,12 +72,15 @@ class ServerProcessor:
     def process(self):
         # handle one client connection
         self.online_asr_proc.init()
+        beg_time = time.time()
         while True:
             a = self.receive_audio_chunk()
             if a is None:
                 break
             self.online_asr_proc.insert_audio_chunk(a)
             o = self.online_asr_proc.process_iter()
+            if o:
+                o["emission_time"] = time.time() - beg_time
             try:
                 self.send_result(o)
             except BrokenPipeError:
@@ -170,7 +148,7 @@ def main_server(factory, add_args):
             conn, addr = s.accept()
             logger.info('Connected to client on {}'.format(addr))
             connection = Connection(conn)
-            proc = ServerProcessor(connection, online, min_chunk)
+            proc = ServerProcessor(connection, online, min_chunk, args.out_txt)
             proc.process()
             conn.close()
             logger.info('Connection to client closed')
