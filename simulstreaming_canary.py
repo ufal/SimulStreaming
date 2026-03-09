@@ -63,6 +63,7 @@ def simulcanary_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group('Prompt and context')
     group.add_argument('--source_lang', type=str, default="en", help='Source language of the input.')
     group.add_argument('--target_lang', type=str, default="en", help='Target language of the output.')
+    group.add_argument('--task', type=str, choices=["asr", "ast", "transcribe", "translate"], default="transcribe", help='Task')
 
 def simul_asr_factory(args):
     logger.setLevel(args.log_level)
