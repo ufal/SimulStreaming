@@ -173,6 +173,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         self.sample_rate = asr.sample_rate
 
     def init(self, offset=None):
+        self.is_last = False
         self._init_stream_state(offset=offset if offset is not None else 0.0)
 
     def _init_stream_state(self, offset: float = 0.0):
@@ -365,7 +366,11 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         xatt_mean = xatt_raw.mean(dim=0)
         xatt_norm = self.normalize_attn(xatt_mean)
 
-        selected_output = self.alignatt_policy(output[0].tokens, xatt_norm)
+        if self.is_last:
+            selected_output = output[0].tokens
+        else:
+            selected_output = self.alignatt_policy(output[0].tokens, xatt_norm)
+
         selected_ids: List[int] = generated_tokens[:len(selected_output)]
 
         self.update_history(selected_ids)
@@ -400,8 +405,8 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         logger.info("Finish")
         self.is_last = True
         o = self.process_iter()
+        self.is_last = False
 
-        self._init_stream_state()
         return o
 
 if __name__ == "__main__":
