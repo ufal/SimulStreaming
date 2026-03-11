@@ -362,6 +362,7 @@ default_inits_tgt = {
     'zh-sim': "请吧，你可以开始发言了，我们已经准备好了。",
     'cs': "Prosím, můžete začít s prezentací, jsme připraveni.",
     "hu": "Kérlek, kezdheted a prezentációdat, készen állunk."
+    "he"': "בבקשה, אתם יכולים להתחיל עם המצגת שלכם, אנחנו מוכנים."
 }
 
 # how many times is target text longer than English
