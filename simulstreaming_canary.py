@@ -5,6 +5,7 @@ import glob
 import json
 import os
 import argparse
+import csv
 from dataclasses import dataclass, field, is_dataclass, fields
 from typing import Optional, List, Tuple
 
@@ -33,6 +34,25 @@ def flatten_list(list):
         flattened.extend(chunk)
 
     return flattened
+
+def load_unboost_words(tsv_path: str, min_percent: float = 0.0) -> List[str]:
+    words: List[str] = []
+    with open(tsv_path, newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh, delimiter="\t")
+        for row in reader:
+            word = row["word"]
+            try:
+                pct = float(row["percent"])
+            except (KeyError, ValueError):
+                logger.warning("Skipping malformed TSV row: %s", row)
+                continue
+            if pct >= min_percent:
+                words.append(word)
+    logger.info(
+        "Loaded %d unboost word(s) from %s (min_percent=%.4f)",
+        len(words), tsv_path, min_percent,
+    )
+    return words
 
 @dataclass
 class StreamingConfig:
@@ -65,6 +85,36 @@ def simulcanary_args(parser: argparse.ArgumentParser):
     group.add_argument('--target_lang', type=str, default="en", help='Target language of the output.')
     group.add_argument('--task', type=str, choices=["asr", "ast", "transcribe", "translate"], default="transcribe", help='Task')
 
+    group = parser.add_argument_group('Word unboosting (GPU-PB)')
+    group.add_argument(
+        '--unboost_words_file',
+        type=str,
+        default=None,
+        help=(
+            'Path to a TSV file (word<TAB>percent header required)'
+        ),
+    )
+    group.add_argument(
+        '--unboost_alpha',
+        type=float,
+        default=-1.0,
+    )
+    group.add_argument(
+        '--unboost_min_percent',
+        type=float,
+        default=0.0,
+        help=(
+            'Only unboost words that appear at least this percentage of the time '
+            'in the source transcription TSV. (default: 0.0 = all words in the file)'
+        ),
+    )
+    group.add_argument(
+        '--unboost_context_score',
+        type=float,
+        default=1.0,
+        help='GPU-PB context_score for the unboosting tree (default: 1.0).',
+    )
+
 def simul_asr_factory(args):
     logger.setLevel(args.log_level)
     decoder = args.decoder
@@ -79,17 +129,42 @@ def simul_asr_factory(args):
             decoder = "greedy"
         elif decoder not in ("beam","greedy"):
             raise ValueError("Invalid decoder type. Use 'beam' or 'greedy'.")
+
+    if getattr(args, 'unboost_words_file', None) is not None and decoder == "greedy":
+        logger.info(
+            "Word unboosting requires beam strategy — switching decoder from 'greedy' to 'beam'. "
+            "beam_size will remain 1"
+        )
+        decoder = "beam"
     
     a = { v:getattr(args, v) for v in ["model_path", "decoder", "frame_threshold", "max_context_len", "audio_max_len", "beams", "task",
                                         'source_lang', 'target_lang'
                                        ]}
 
     a["decoder"] = decoder
+    for key in ("unboost_words_file", "unboost_alpha", "unboost_min_percent", "unboost_context_score"):
+        a[key] = getattr(args, key, None)
+    
     asr = SimulCanaryASR(**a)
     return asr, SimulCanaryOnline(asr)
 
 class SimulCanaryASR:
-    def __init__(self, model_path, decoder, frame_threshold, max_context_len, audio_max_len, beams, task, source_lang, target_lang):
+    def __init__(
+        self, 
+        model_path, 
+        decoder, 
+        frame_threshold, 
+        max_context_len, 
+        audio_max_len, 
+        beams, 
+        task, 
+        source_lang, 
+        target_lang,
+        unboost_words_file: Optional[str] = None,
+        unboost_alpha: float = -1.0,
+        unboost_min_percent: float = 0.0,
+        unboost_context_score: float = 1.0,
+    ):
         if model_path is not None:
             self.model = ASRModel.restore_from(restore_path=model_path)
         else:
@@ -98,6 +173,10 @@ class SimulCanaryASR:
         self.device = next(self.model.parameters()).device
         self.sample_rate = self.model.cfg.preprocessor.sample_rate
 
+        self._unboost_words: List[str] = []
+        if unboost_words_file is not None:
+            self._unboost_words = load_unboost_words(unboost_words_file, min_percent=unboost_min_percent)
+
         # Setup decoding strategy
         if hasattr(self.model, 'change_decoding_strategy'):
             multitask_decoding = MultiTaskDecodingConfig()
@@ -105,6 +184,13 @@ class SimulCanaryASR:
             multitask_decoding.compute_hypothesis_token_set = True
             multitask_decoding.return_xattn_scores = True
             multitask_decoding.beam.beam_size = beams
+
+            if self._unboost_words:
+                multitask_decoding.beam.boosting_tree.key_phrases_list = self._unboost_words
+                multitask_decoding.beam.boosting_tree.context_score = unboost_context_score
+                multitask_decoding.beam.boosting_tree.depth_scaling = 1.0
+                multitask_decoding.beam.boosting_tree_alpha = unboost_alpha
+
             self.model.change_decoding_strategy(multitask_decoding)
 
         #override default transcribe values with this
