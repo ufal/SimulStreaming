@@ -79,6 +79,9 @@ def simulcanary_args(parser: argparse.ArgumentParser):
     group.add_argument('--frame_threshold', type=int, default=4, 
         help='Threshold for the attention-guided decoding. The AlignAtt policy will decode only ' \
             'until this number of encoder frames from the end of audio. In frames: in one second of 16kHz input there is ceil(16000 / 16000*0.01 / 8) = 13 frames.')
+    group.add_argument('--strip_incomplete_words', action='store_true', default=False,
+        help='If set, trailing incomplete words are stripped '
+             'from the AlignAtt output before emission.')
 
     group = parser.add_argument_group('Prompt and context')
     group.add_argument('--source_lang', type=str, default="en", help='Source language of the input.')
@@ -144,6 +147,8 @@ def simul_asr_factory(args):
     a["decoder"] = decoder
     for key in ("unboost_words_file", "unboost_alpha", "unboost_min_percent", "unboost_context_score"):
         a[key] = getattr(args, key, None)
+
+    a["strip_incomplete_words"] = getattr(args, "strip_incomplete_words", False)
     
     asr = SimulCanaryASR(**a)
     return asr, SimulCanaryOnline(asr)
@@ -164,6 +169,7 @@ class SimulCanaryASR:
         unboost_alpha: float = -1.0,
         unboost_min_percent: float = 0.0,
         unboost_context_score: float = 1.0,
+        strip_incomplete_words: bool = False,
     ):
         if model_path is not None:
             self.model = ASRModel.restore_from(restore_path=model_path)
@@ -172,6 +178,8 @@ class SimulCanaryASR:
 
         self.device = next(self.model.parameters()).device
         self.sample_rate = self.model.cfg.preprocessor.sample_rate
+
+        self.strip_incomplete_words = strip_incomplete_words
 
         self._unboost_words: List[str] = []
         if unboost_words_file is not None:
@@ -258,6 +266,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         self.cfg = asr.cfg
         self._init_stream_state()
         self.sample_rate = asr.sample_rate
+        self.strip_incomplete_words = asr.strip_incomplete_words
 
     def init(self, offset=None):
         self.is_last = False
@@ -319,6 +328,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         """
         Remove last incomplete word(s) from the new hypothesis.
         """
+
         tokens_to_write = []
         # iterate from the end and count how many trailing tokens to drop
         num_tokens_incomplete = 0
@@ -328,6 +338,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
                 # slice off the trailing incomplete tokens
                 tokens_to_write = tokens[:-num_tokens_incomplete]
                 break
+
         return tokens_to_write
 
     def alignatt_policy(self, generated_tokens, cross_attn) -> List[str]:
@@ -354,7 +365,9 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         if len(invalid_tok_ids) > 0:
             selected_tokens = selected_tokens[:invalid_tok_ids[0]]
 
-        selected_tokens = self._strip_incomplete_words(selected_tokens)
+        # Strip incomplete words(if set as a param)
+        if self.strip_incomplete_words:
+            selected_tokens = self._strip_incomplete_words(selected_tokens)
 
         return selected_tokens
 
@@ -428,6 +441,13 @@ class SimulCanaryOnline(OnlineProcessorInterface):
 
         return result
 
+    def _modify_emit_text(self, tokens: List[str]) -> str:
+        #Add space if the first emitted token is not a continuation of the previous
+        if len(tokens) > 0 and tokens[0].startswith(BOW_PREFIX):
+            return f" {self.model.tokenizer.tokens_to_text(tokens)}"
+
+        return self.model.tokenizer.tokens_to_text(tokens) 
+
     def process_iter(self):
         speech = self._concat_audio_chunks()
 
@@ -460,6 +480,9 @@ class SimulCanaryOnline(OnlineProcessorInterface):
 
         selected_ids: List[int] = generated_tokens[:len(selected_output)]
 
+        #Text to emit
+        text = self._modify_emit_text(selected_output)
+
         self.update_history(selected_ids)
 
         # Combine timestamps
@@ -483,7 +506,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         return {
             "start":  seg_start,
             "end":    seg_end,
-            "text":   self.model.tokenizer.ids_to_text(selected_ids),
+            "text":   text,
             "tokens": selected_ids,
             "words":  words,
         }
