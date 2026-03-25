@@ -206,6 +206,7 @@ class SimulCanaryASR:
             batch_size=1, # Batch size is one, one input stream per connection
             return_hypotheses=True, # return Hypothesis class
             enable_chunking=False, # Disable chunking because we need cross-attention scores
+            timestamps=True,
             verbose=False,
         )
 
@@ -462,7 +463,6 @@ class SimulCanaryOnline(OnlineProcessorInterface):
 
         output = self.model.transcribe(
             speech,
-            timestamps=True,
             override_config=override_config
         )
 
