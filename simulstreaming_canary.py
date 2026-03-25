@@ -267,6 +267,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         self._init_stream_state()
         self.sample_rate = asr.sample_rate
         self.strip_incomplete_words = asr.strip_incomplete_words
+        self.init()
 
     def init(self, offset=None):
         self.is_last = False
