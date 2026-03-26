@@ -86,7 +86,7 @@ def simulcanary_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group('Prompt and context')
     group.add_argument('--source_lang', type=str, default="en", help='Source language of the input.')
     group.add_argument('--target_lang', type=str, default="en", help='Target language of the output.')
-    group.add_argument('--task', type=str, choices=["asr", "ast", "transcribe", "translate"], default="transcribe", help='Task')
+    group.add_argument('--task', type=str, choices=["asr", "ast", "transcribe", "translate", "s2t_translation"], default="transcribe", help='Task')
 
     group = parser.add_argument_group('Word unboosting (GPU-PB)')
     group.add_argument(
@@ -294,7 +294,8 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         return np.concatenate(self.audio_chunks, axis=0)
 
     def _preprocess(self, audio):
-        self.audio_history.append(audio)
+        if audio is not None:
+            self.audio_history.append(audio)
 
         return np.concatenate(self.audio_history, axis=0)
 
@@ -375,9 +376,9 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         if len(invalid_tok_ids) > 0:
             selected_tokens = selected_tokens[:invalid_tok_ids[0]]
 
-        # Strip incomplete words(if set as a param)
-        if self.strip_incomplete_words:
-            selected_tokens = self._strip_incomplete_words(selected_tokens)
+            # Strip incomplete words(if set as a param)
+            if self.strip_incomplete_words:
+                selected_tokens = self._strip_incomplete_words(selected_tokens)
 
         return selected_tokens
 
@@ -447,7 +448,6 @@ class SimulCanaryOnline(OnlineProcessorInterface):
                 'text':  ts['word'],
                 'tokens': word_token_groups[i],
             })
-            logger.debug(f"TS-WORD-INFO: {result[-1]}")
 
         return result
 
