@@ -278,6 +278,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         self.context_buffer = []
         self.output_history = []
         self.audio_chunks = []
+        self.audio_history = []
         self.audio_buffer_offset = offset
 
     def insert_audio_chunk(self, audio):
@@ -291,6 +292,11 @@ class SimulCanaryOnline(OnlineProcessorInterface):
             return None
         
         return np.concatenate(self.audio_chunks, axis=0)
+
+    def _preprocess(self, audio):
+        self.audio_history.append(audio)
+
+        return np.concatenate(self.audio_history, axis=0)
 
     def normalize_attn(self, attn: torch.Tensor):
         """
@@ -308,13 +314,15 @@ class SimulCanaryOnline(OnlineProcessorInterface):
 
         if output is not None and len(output) > 0:
             self.output_history.append(output)
+        else:
+            self.output_history.append([])
 
-        total_audio_len = sum(len(audio_chunk) for audio_chunk in self.audio_chunks)
+        total_audio_len = sum(len(audio_chunk) for audio_chunk in self.audio_history)
         while (total_audio_len / self.sample_rate > self.cfg.audio_max_len and
-            self.audio_chunks and
+            self.audio_history and
             self.output_history):
 
-            removed_chunk = self.audio_chunks.pop(0)
+            removed_chunk = self.audio_history.pop(0)
 
             self.audio_buffer_offset += len(removed_chunk) / self.sample_rate
             
@@ -452,6 +460,9 @@ class SimulCanaryOnline(OnlineProcessorInterface):
 
     def process_iter(self):
         speech = self._concat_audio_chunks()
+        self.audio_chunks = []
+
+        input_speech = self._preprocess(speech)
 
         flattened_history = flatten_list(self.output_history)
         flattened_context = flatten_list(self.context_buffer)
@@ -462,7 +473,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         )
 
         output = self.model.transcribe(
-            speech,
+            input_speech,
             override_config=override_config
         )
 
@@ -470,7 +481,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         if isinstance(generated_tokens, torch.Tensor):
             generated_tokens = generated_tokens.detach().cpu().tolist()
         
-        xatt_raw = output[0].xatt_scores[self.cfg.xatt_layer][:, :decoder_input_ids.shape[1] + len(generated_tokens), :]
+        xatt_raw = output[0].xatt_scores[self.cfg.xatt_layer]
         xatt_mean = xatt_raw.mean(dim=0)
         xatt_norm = self.normalize_attn(xatt_mean)
 
@@ -516,6 +527,8 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         logger.info("Finish")
         self.is_last = True
         o = self.process_iter()
+
+        self.context_history = []
         self.is_last = False
 
         return o
