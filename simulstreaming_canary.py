@@ -87,6 +87,9 @@ def simulcanary_args(parser: argparse.ArgumentParser):
     group.add_argument('--source_lang', type=str, default="en", help='Source language of the input.')
     group.add_argument('--target_lang', type=str, default="en", help='Target language of the output.')
     group.add_argument('--task', type=str, choices=["asr", "ast", "transcribe", "translate", "s2t_translation"], default="transcribe", help='Task')
+    group.add_argument('--decoder_context', action='store_true', default=False, 
+        help='If set, outputs from the previous hypothesis outside of the current '
+             'audio_history are transferred to the <decodercontext> ')
 
     group = parser.add_argument_group('Word unboosting (GPU-PB)')
     group.add_argument(
@@ -149,6 +152,7 @@ def simul_asr_factory(args):
         a[key] = getattr(args, key, None)
 
     a["strip_incomplete_words"] = getattr(args, "strip_incomplete_words", False)
+    a["decoder_context"] = getattr(args, "decoder_context", False)
     
     asr = SimulCanaryASR(**a)
     return asr, SimulCanaryOnline(asr)
@@ -170,6 +174,7 @@ class SimulCanaryASR:
         unboost_min_percent: float = 0.0,
         unboost_context_score: float = 1.0,
         strip_incomplete_words: bool = False,
+        decoder_context: bool = False,
     ):
         if model_path is not None:
             self.model = ASRModel.restore_from(restore_path=model_path)
@@ -180,6 +185,7 @@ class SimulCanaryASR:
         self.sample_rate = self.model.cfg.preprocessor.sample_rate
 
         self.strip_incomplete_words = strip_incomplete_words
+        self.decoder_context = decoder_context
 
         self._unboost_words: List[str] = []
         if unboost_words_file is not None:
@@ -268,6 +274,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         self._init_stream_state()
         self.sample_rate = asr.sample_rate
         self.strip_incomplete_words = asr.strip_incomplete_words
+        self.decoder_context = asr.decoder_context
         self.init()
 
     def init(self, offset=None):
@@ -313,7 +320,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         Update audio history based on the audio_max_len. Push previous output to the output history.
         """
 
-        if output is not None and len(output) > 0:
+        if output is not None:
             self.output_history.append(output)
         else:
             self.output_history.append([])
@@ -328,7 +335,8 @@ class SimulCanaryOnline(OnlineProcessorInterface):
             self.audio_buffer_offset += len(removed_chunk) / self.sample_rate
             
             total_audio_len -= len(removed_chunk)
-            self.context_buffer.append(self.output_history.pop(0))
+            if self.decoder_context:
+                self.context_buffer.append(self.output_history.pop(0))
 
         total_context_len = sum(len(chunk) for chunk in self.context_buffer)
         while total_context_len > self.cfg.max_context_len:
@@ -458,6 +466,16 @@ class SimulCanaryOnline(OnlineProcessorInterface):
 
         return self.model.tokenizer.tokens_to_text(tokens) 
 
+    def _remove_eos_tokens(self, tokens: List[int]) -> List[int]:
+        if len(tokens) < 1:
+            return tokens
+        
+        pos = 0
+        while tokens[pos] == self.model.tokenizer.eos_id and pos < len(tokens):
+            pos += 1
+
+        return tokens[pos:]
+
     def process_iter(self):
         speech = self._concat_audio_chunks()
         self.audio_chunks = []
@@ -481,14 +499,17 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         if isinstance(generated_tokens, torch.Tensor):
             generated_tokens = generated_tokens.detach().cpu().tolist()
         
+        # Remove possible EOS tokens because of forced prefix
+        generated_tokens = self._remove_eos_tokens(generated_tokens)
+        
         xatt_raw = output[0].xatt_scores[self.cfg.xatt_layer]
         xatt_mean = xatt_raw.mean(dim=0)
         xatt_norm = self.normalize_attn(xatt_mean)
 
         if self.is_last:
-            selected_output = output[0].tokens
+            selected_output = output[0].tokens[-len(generated_tokens):]
         else:
-            selected_output = self.alignatt_policy(output[0].tokens, xatt_norm)
+            selected_output = self.alignatt_policy(output[0].tokens[-len(generated_tokens):], xatt_norm)
 
         selected_ids: List[int] = generated_tokens[:len(selected_output)]
 
