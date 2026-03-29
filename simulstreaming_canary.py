@@ -549,7 +549,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         self.is_last = True
         o = self.process_iter()
 
-        self.context_history = []
+        self.context_buffer = []
         self.is_last = False
 
         return o
