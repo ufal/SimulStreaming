@@ -335,8 +335,9 @@ class SimulCanaryOnline(OnlineProcessorInterface):
             self.audio_buffer_offset += len(removed_chunk) / self.sample_rate
             
             total_audio_len -= len(removed_chunk)
+            removed_out_prefix = self.output_history.pop(0)
             if self.decoder_context:
-                self.context_buffer.append(self.output_history.pop(0))
+                self.context_buffer.append(removed_out_prefix)
 
         total_context_len = sum(len(chunk) for chunk in self.context_buffer)
         while total_context_len > self.cfg.max_context_len:
