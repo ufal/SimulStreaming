@@ -61,15 +61,14 @@ class ServerProcessor:
         # - the next words: segment transcript
         if iteration_output:
             if self.out_txt:
-                if iteration_output.get('start'):
+                if 'text' in iteration_output:
                     message = "%1.0f %1.0f %s" % (iteration_output['start'] * 1000, iteration_output['end'] * 1000, iteration_output['text'])
-                else:
-                    logger.debug("No token in this segment")
-                    return
+                    print(message, flush=True, file=sys.stderr)
+                    self.connection.send(message)
             else:
                 message = json.dumps(iteration_output)
-            print(message, flush=True, file=sys.stderr)
-            self.connection.send(message)
+                print(message, flush=True, file=sys.stderr)
+                self.connection.send(message)
         else:
             logger.debug("No text in this segment")
 
