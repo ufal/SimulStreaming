@@ -35,25 +35,6 @@ def flatten_list(list):
 
     return flattened
 
-def load_unboost_words(tsv_path: str, min_percent: float = 0.0) -> List[str]:
-    words: List[str] = []
-    with open(tsv_path, newline="", encoding="utf-8") as fh:
-        reader = csv.DictReader(fh, delimiter="\t")
-        for row in reader:
-            word = row["word"]
-            try:
-                pct = float(row["percent"])
-            except (KeyError, ValueError):
-                logger.warning("Skipping malformed TSV row: %s", row)
-                continue
-            if pct >= min_percent:
-                words.append(word)
-    logger.info(
-        "Loaded %d unboost word(s) from %s (min_percent=%.4f)",
-        len(words), tsv_path, min_percent,
-    )
-    return words
-
 @dataclass
 class StreamingConfig:
     audio_max_len: int
@@ -64,7 +45,7 @@ class StreamingConfig:
 def simulcanary_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group('Canary-v2 arguments')
     group.add_argument('--model_path', type=str, default=None, 
-                        help='The file path to the Canary .pt model. If not present on the filesystem, the model is downloaded automatically. Does not download twice')
+                        help='The file path to the Canary .nemo model. If not present on the filesystem, the model is downloaded automatically. Does not download twice')
     group.add_argument("--beams","-b", type=int, default=1, help="Number of beams for beam search decoding. If 1, greedy is used.")
     group.add_argument("--decoder",type=str, choices=["beam", "greedy"], default=None, help="Override automatic selection of beam or greedy decoder. "
                         "If beams > 1 and greedy: invalid.")
@@ -91,36 +72,6 @@ def simulcanary_args(parser: argparse.ArgumentParser):
         help='If set, outputs from the previous hypothesis outside of the current '
              'audio_history are transferred to the <decodercontext> ')
 
-    group = parser.add_argument_group('Word unboosting (GPU-PB)')
-    group.add_argument(
-        '--unboost_words_file',
-        type=str,
-        default=None,
-        help=(
-            'Path to a TSV file (word<TAB>percent header required)'
-        ),
-    )
-    group.add_argument(
-        '--unboost_alpha',
-        type=float,
-        default=-1.0,
-    )
-    group.add_argument(
-        '--unboost_min_percent',
-        type=float,
-        default=0.0,
-        help=(
-            'Only unboost words that appear at least this percentage of the time '
-            'in the source transcription TSV. (default: 0.0 = all words in the file)'
-        ),
-    )
-    group.add_argument(
-        '--unboost_context_score',
-        type=float,
-        default=1.0,
-        help='GPU-PB context_score for the unboosting tree (default: 1.0).',
-    )
-
 def simul_asr_factory(args):
     logger.setLevel(args.log_level)
     decoder = args.decoder
@@ -135,22 +86,12 @@ def simul_asr_factory(args):
             decoder = "greedy"
         elif decoder not in ("beam","greedy"):
             raise ValueError("Invalid decoder type. Use 'beam' or 'greedy'.")
-
-    if getattr(args, 'unboost_words_file', None) is not None and decoder == "greedy":
-        logger.info(
-            "Word unboosting requires beam strategy — switching decoder from 'greedy' to 'beam'. "
-            "beam_size will remain 1"
-        )
-        decoder = "beam"
     
     a = { v:getattr(args, v) for v in ["model_path", "decoder", "frame_threshold", "max_context_len", "audio_max_len", "beams", "task",
                                         'source_lang', 'target_lang'
                                        ]}
 
     a["decoder"] = decoder
-    for key in ("unboost_words_file", "unboost_alpha", "unboost_min_percent", "unboost_context_score"):
-        a[key] = getattr(args, key, None)
-
     a["strip_incomplete_words"] = getattr(args, "strip_incomplete_words", False)
     a["decoder_context"] = getattr(args, "decoder_context", False)
     
@@ -169,10 +110,6 @@ class SimulCanaryASR:
         task, 
         source_lang, 
         target_lang,
-        unboost_words_file: Optional[str] = None,
-        unboost_alpha: float = -1.0,
-        unboost_min_percent: float = 0.0,
-        unboost_context_score: float = 1.0,
         strip_incomplete_words: bool = False,
         decoder_context: bool = False,
     ):
@@ -187,10 +124,6 @@ class SimulCanaryASR:
         self.strip_incomplete_words = strip_incomplete_words
         self.decoder_context = decoder_context
 
-        self._unboost_words: List[str] = []
-        if unboost_words_file is not None:
-            self._unboost_words = load_unboost_words(unboost_words_file, min_percent=unboost_min_percent)
-
         # Setup decoding strategy
         if hasattr(self.model, 'change_decoding_strategy'):
             multitask_decoding = MultiTaskDecodingConfig()
@@ -198,12 +131,6 @@ class SimulCanaryASR:
             multitask_decoding.compute_hypothesis_token_set = True
             multitask_decoding.return_xattn_scores = True
             multitask_decoding.beam.beam_size = beams
-
-            if self._unboost_words:
-                multitask_decoding.beam.boosting_tree.key_phrases_list = self._unboost_words
-                multitask_decoding.beam.boosting_tree.context_score = unboost_context_score
-                multitask_decoding.beam.boosting_tree.depth_scaling = 1.0
-                multitask_decoding.beam.boosting_tree_alpha = unboost_alpha
 
             self.model.change_decoding_strategy(multitask_decoding)
 
@@ -252,14 +179,10 @@ class SimulCanaryASR:
                 },
             },
         ]
-
-        # The model's output does not work properly when simply setting "turns = turns" in the
-        # override_config. So we have to parse the prompt
-        prompt_list = parse_multitask_prompt({"turns": turns})
-
+        
         # Make a copy of the transcription config and set its prompt field
         cfg_copy = copy.deepcopy(self.multitask_transcription_conf)
-        cfg_copy.prompt = prompt_list
+        cfg_copy.prompt = turns
 
         encoded = self.model.prompt.encode_dialog(turns=turns)
         decoder_input_ids = encoded["context_ids"].unsqueeze(0).to(self.device)
@@ -406,17 +329,15 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         token_strings = ["▁Hello", "▁world", "!"]
         → [[id_Hello], [id_world, id_!]]
         """
-        words: List[List[int]] = []
-        current_ids: List[int] = []
+        words = []
+        current_ids = []
 
         for tok_str, tok_id in zip(token_strings, token_ids):
             if tok_str.startswith(BOW_PREFIX):
-                # A BOW token starts a new word – flush the current one first.
                 if current_ids:
                     words.append(current_ids)
                 current_ids = [tok_id]
             else:
-                # Continuation token (punctuation, sub-word suffix, …)
                 current_ids.append(tok_id)
 
         if current_ids:
@@ -436,11 +357,11 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         Parameters
         ----------
         token_strings:
-            Decoded token strings for the *selected* tokens only.
+            Decoded token strings.
         token_ids:
-            Corresponding token IDs for the selected tokens.
+            token IDs corresponding to token_strings.
         canary_ts_words:
-            The timestamps word list produced by the model for.
+            The timestamps word list produced by the model.
         """
         word_token_groups = self._group_tokens_into_words(token_strings, token_ids)
 
@@ -448,7 +369,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
         # lists: our token grouping may have fewer entries than canary_ts_words
         n_words = min(len(word_token_groups), len(canary_ts_words))
 
-        result: List[dict] = []
+        result = []
         for i in range(n_words):
             ts = canary_ts_words[i]
             result.append({
@@ -466,16 +387,6 @@ class SimulCanaryOnline(OnlineProcessorInterface):
             return f" {self.model.tokenizer.tokens_to_text(tokens)}"
 
         return self.model.tokenizer.tokens_to_text(tokens) 
-
-    def _remove_eos_tokens(self, tokens: List[int]) -> List[int]:
-        if len(tokens) < 1:
-            return tokens
-        
-        pos = 0
-        while tokens[pos] == self.model.tokenizer.eos_id and pos < len(tokens):
-            pos += 1
-
-        return tokens[pos:]
 
     def process_iter(self):
         speech = self._concat_audio_chunks()
@@ -496,21 +407,16 @@ class SimulCanaryOnline(OnlineProcessorInterface):
             override_config=override_config
         )
 
-        generated_tokens = output[0].y_sequence
-        if isinstance(generated_tokens, torch.Tensor):
-            generated_tokens = generated_tokens.detach().cpu().tolist()
-        
-        # Remove possible EOS tokens because of forced prefix
-        generated_tokens = self._remove_eos_tokens(generated_tokens)
+        generated_tokens = output[0].y_sequence.detach().cpu().tolist()
         
         xatt_raw = output[0].xatt_scores[self.cfg.xatt_layer]
         xatt_mean = xatt_raw.mean(dim=0)
         xatt_norm = self.normalize_attn(xatt_mean)
 
         if self.is_last:
-            selected_output = output[0].tokens[-len(generated_tokens):]
+            selected_output = output[0].tokens
         else:
-            selected_output = self.alignatt_policy(output[0].tokens[-len(generated_tokens):], xatt_norm)
+            selected_output = self.alignatt_policy(output[0].tokens, xatt_norm)
 
         selected_ids: List[int] = generated_tokens[:len(selected_output)]
 
@@ -519,7 +425,7 @@ class SimulCanaryOnline(OnlineProcessorInterface):
 
         self.update_history(selected_ids)
 
-        # Combine timestamps
+        # Combine timestamps with token grouping to get word-level timestamps
         canary_ts_words: List[dict] = []
         if output[0].timestamp and 'word' in output[0].timestamp:
                     canary_ts_words = output[0].timestamp['word']
