@@ -25,5 +25,5 @@ class Connection:
         try:
             r = self.conn.recv(self.PACKET_SIZE)
             return r
-        except ConnectionResetError:
+        except (ConnectionResetError, ConnectionAbortedError):
             return None

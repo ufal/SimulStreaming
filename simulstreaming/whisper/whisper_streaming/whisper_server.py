@@ -86,7 +86,7 @@ class ServerProcessor:
                 o["emission_time"] = time.time() - beg_time
             try:
                 self.send_result(o)
-            except BrokenPipeError:
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 logger.info("broken pipe -- connection closed?")
                 break
 
