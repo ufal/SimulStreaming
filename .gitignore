@@ -1,0 +1,43 @@
+# ----------------------------
+# Python
+# ----------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.env
+.venv/
+venv/
+ENV/
+env/
+.python-version
+.poetry/
+poetry.lock
+
+# ----------------------------
+# Go
+# ----------------------------
+bin/
+pkg/
+*.test
+*.out
+coverage.out
+
+# go build cache
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# ----------------------------
+# Project specific
+# ----------------------------
+assets/
+models/

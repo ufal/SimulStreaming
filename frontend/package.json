@@ -1,0 +1,7 @@
+{
+  "name": "stream-ui",
+  "type": "module",
+  "scripts": {
+    "start": "bun run server.js"
+  }
+}

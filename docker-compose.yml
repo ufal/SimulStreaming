@@ -1,0 +1,145 @@
+services:
+    nats:
+        image: nats:2.14.0-alpine3.22
+        command: ["-js", "-m", "8222"]
+        ports:
+            - "4222:4222"
+            - "8222:8222"
+        volumes:
+            - nats_data:/data
+        restart: unless-stopped
+        networks:
+            - whisper-net
+
+    mediamtx:
+        build:
+            context: ./mediamtx
+            dockerfile: Dockerfile
+        volumes:
+            - ./assets:/assets:ro
+        ports:
+            - "8554:8554"
+            - "8888:8888"
+            - "8889:8889"
+            - "9997:9997"
+            - "1935:1935"
+        restart: unless-stopped
+        networks:
+            - whisper-net
+
+    audio-segmenter:
+        build:
+            context: .
+            dockerfile: Dockerfile.golang
+            args:
+                APP_DIR: audio-segmenter
+                APP_BIN: audio-segmenter
+        environment:
+            NATS_URL: nats://nats:4222
+            APP_BIN: audio-segmenter
+        ports:
+            - "8001:8001"
+        depends_on:
+            - nats
+            - mediamtx
+        restart: unless-stopped
+        networks:
+            - whisper-net
+
+    ws-captions:
+        build:
+            context: .
+            dockerfile: Dockerfile.golang
+            args:
+                APP_DIR: ws-captions
+                APP_BIN: ws-captions
+        environment:
+            NATS_URL: nats://nats:4222
+            LISTEN_ADDR: :8002
+            APP_BIN: ws-captions
+        ports:
+            - "8002:8002"
+        depends_on:
+            - nats
+        restart: unless-stopped
+        networks:
+            - whisper-net
+
+    ui:
+        build:
+            context: .
+            dockerfile: Dockerfile.ui
+        environment:
+            PORT: "8000"
+            STREAM_REGISTRY_URL: http://stream-registry:8003
+            WS_CAPTIONS_URL: ws://localhost:8002
+            HLS_BASE_URL: http://localhost:8888
+        ports:
+            - "8000:8000"
+        depends_on:
+            - mediamtx
+            - audio-segmenter
+            - ws-captions
+        restart: unless-stopped
+        networks:
+            - whisper-net
+
+    stream-registry:
+        build:
+            context: .
+            dockerfile: stream-registry/Dockerfile
+        environment:
+            PORT: "8003"
+        ports:
+            - "8003:8003"
+        restart: unless-stopped
+        networks:
+            - whisper-net
+
+volumes:
+    nats_data:
+
+networks:
+    whisper-net:
+        driver: bridge
+
+    # whisper-worker:
+    #     build:
+    #         context: .
+    #         dockerfile: Dockerfile.python
+    #     environment:
+    #         NATS_URL: nats://nats:4222
+    #         LOG_LEVEL: INFO
+    #         MAX_AUDIO_STREAMS: "2"
+    #         HF_HOME: /cache/huggingface
+    #         HUGGINGFACE_HUB_CACHE: /cache/huggingface
+    #         TRANSFORMERS_CACHE: /cache/huggingface
+    #         TORCH_HOME: /cache/torch
+    #         WHISPER_MODEL_PATH: /cache/large-v3-turbo.pt
+    #         WHISPER_LANGUAGE: auto
+    #         WHISPER_TASK: transcribe
+    #         WHISPER_FP16: "true"
+    #         WHISPER_WARMUP_SECONDS: "3"
+
+    #         HIP_VISIBLE_DEVICES: "0"
+    #         ROCR_VISIBLE_DEVICES: "0"
+    #         GPU_DEVICE_ORDINAL: "0"
+    #     volumes:
+    #         - ~/.cache/whisper:/cache
+    #     devices:
+    #         - /dev/kfd:/dev/kfd
+    #         - /dev/dri/renderD128:/dev/dri/renderD128
+    #     group_add:
+    #         - video
+    #         - render
+    #     ipc: host
+    #     shm_size: 8gb
+    #     cap_add:
+    #         - SYS_PTRACE
+    #     security_opt:
+    #         - seccomp=unconfined
+    #     depends_on:
+    #         - nats
+    #     restart: unless-stopped
+    #     networks:
+    #         - whisper-net

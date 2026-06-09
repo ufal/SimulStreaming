@@ -1,0 +1,697 @@
+import asyncio
+import json
+import logging
+import os
+import random
+import re
+import string
+import struct
+import time
+from dataclasses import dataclass, field
+from typing import Dict, Optional
+
+import nats
+from nats.aio.msg import Msg
+from nats.js.api import (
+    DiscardPolicy,
+    KeyValueConfig,
+    RetentionPolicy,
+    StorageType,
+    StreamConfig,
+)
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+log = logging.getLogger("whisper-worker")
+
+NATS_URL = os.getenv("NATS_URL", "nats://localhost:4222")
+
+OPUS_SUBJECT = os.getenv("OPUS_SUBJECT", "opus.segments.*")
+SUBTITLES_SUBJECT = os.getenv("SUBTITLES_SUBJECT", "subtitles.*")
+STREAM_EVENTS_SUBJECT = os.getenv("STREAM_EVENTS_SUBJECT", "streams.*")
+
+OPUS_STREAM = os.getenv("OPUS_STREAM", "OPUS_SEGMENTS")
+SUBTITLES_STREAM = os.getenv("SUBTITLES_STREAM", "SUBTITLES")
+STREAM_EVENTS_STREAM = os.getenv("STREAM_EVENTS_STREAM", "STREAM_EVENTS")
+
+WORKERS_BUCKET = os.getenv("WORKERS_BUCKET", "WHISPER_WORKERS")
+ASSIGNMENTS_BUCKET = os.getenv("ASSIGNMENTS_BUCKET", "WHISPER_ASSIGNMENTS")
+
+BASE_DURABLE_NAME = os.getenv("DURABLE_NAME", "whisper-worker")
+FETCH_BATCH = int(os.getenv("FETCH_BATCH", "32"))
+FETCH_TIMEOUT = float(os.getenv("FETCH_TIMEOUT_SEC", "1.0"))
+
+MAX_AUDIO_STREAMS = int(os.getenv("MAX_AUDIO_STREAMS", "2"))
+IDLE_STREAM_TTL_SEC = float(os.getenv("IDLE_STREAM_TTL_SEC", "10.0"))
+
+WORKER_TTL_SEC = float(os.getenv("WORKER_TTL_SEC", "10.0"))
+WORKER_HEARTBEAT_SEC = float(os.getenv("WORKER_HEARTBEAT_SEC", "3.0"))
+ASSIGNMENT_TTL_SEC = float(os.getenv("ASSIGNMENT_TTL_SEC", "15.0"))
+
+MIN_DELAY_SEC = float(os.getenv("MIN_DELAY_SEC", "0.2"))
+MAX_DELAY_SEC = float(os.getenv("MAX_DELAY_SEC", "1.5"))
+
+SUBTITLE_MIN_LEN = int(os.getenv("SUBTITLE_MIN_LEN", "1"))
+SUBTITLE_MAX_LEN = int(os.getenv("SUBTITLE_MAX_LEN", "16"))
+
+LATIN = string.ascii_lowercase
+
+
+@dataclass
+class OpusChunk:
+    stream_name: str
+    seq: int
+    timestamp: int
+    pts: int
+    payload: bytes
+
+
+@dataclass
+class PendingItem:
+    msg: Msg
+    chunk: OpusChunk
+
+
+@dataclass
+class StreamState:
+    stream_name: str
+    queue: asyncio.Queue = field(default_factory=asyncio.Queue)
+    task: Optional[asyncio.Task] = None
+    last_seen: float = field(default_factory=time.time)
+    owned: bool = False
+    closing: bool = False
+
+
+def safe_key_part(value: str) -> str:
+    value = value.strip().lower()
+    value = re.sub(r"[^a-z0-9_.-]+", "_", value)
+    value = re.sub(r"_+", "_", value).strip("._-")
+    return value or "key"
+
+
+class WhisperWorker:
+    def __init__(self) -> None:
+        self.nc: Optional[nats.NATS] = None
+        self.js = None
+        self.workers_kv = None
+        self.assign_kv = None
+
+        self.streams: Dict[str, StreamState] = {}
+        self.pending_streams: set[str] = set()
+        self.stop_event = asyncio.Event()
+        self.active_streams = 0
+
+        self.worker_id = (
+            f"{os.uname().nodename}:{os.getpid()}:{int(time.time() * 1000)}"
+        )
+        self.worker_key_id = safe_key_part(self.worker_id)
+        self.durable_name = f"{BASE_DURABLE_NAME}-{self.worker_key_id}"
+
+        self.opus_sub = None
+        self.events_sub = None
+
+    async def connect(self) -> None:
+        self.nc = nats.NATS()
+        await self.nc.connect(servers=[NATS_URL], name=self.durable_name)
+        self.js = self.nc.jetstream()
+        await self.ensure_streams()
+        await self.ensure_kv()
+        log.info(
+            "connected to nats=%s worker_id=%s durable=%s max_audio_streams=%d",
+            NATS_URL,
+            self.worker_id,
+            self.durable_name,
+            MAX_AUDIO_STREAMS,
+        )
+
+    async def ensure_streams(self) -> None:
+        await self.ensure_stream(OPUS_STREAM, ["opus.segments.*"])
+        await self.ensure_stream(SUBTITLES_STREAM, ["subtitles.*"])
+        await self.ensure_stream(
+            STREAM_EVENTS_STREAM, ["streams.active.*", "streams.inactive.*"]
+        )
+
+    async def ensure_stream(self, name: str, subjects: list[str]) -> None:
+        cfg = StreamConfig(
+            name=name,
+            subjects=subjects,
+            retention=RetentionPolicy.LIMITS,
+            storage=StorageType.FILE,
+            discard=DiscardPolicy.OLD,
+            max_age=24 * 60 * 60.0,
+        )
+
+        try:
+            info = await self.js.stream_info(name)
+            if list(info.config.subjects or []) == subjects:
+                return
+            await self.js.update_stream(cfg)
+            log.info("updated stream=%s subjects=%s", name, subjects)
+            return
+        except Exception:
+            await self.js.add_stream(cfg)
+            log.info("created stream=%s subjects=%s", name, subjects)
+
+    async def ensure_kv(self) -> None:
+        try:
+            self.workers_kv = await self.js.key_value(WORKERS_BUCKET)
+        except Exception:
+            self.workers_kv = await self.js.create_key_value(
+                KeyValueConfig(
+                    bucket=WORKERS_BUCKET,
+                    history=1,
+                    ttl=WORKER_TTL_SEC,
+                    storage=StorageType.FILE,
+                    replicas=1,
+                )
+            )
+            log.info("created kv bucket=%s ttl=%.1fs", WORKERS_BUCKET, WORKER_TTL_SEC)
+
+        try:
+            self.assign_kv = await self.js.key_value(ASSIGNMENTS_BUCKET)
+        except Exception:
+            self.assign_kv = await self.js.create_key_value(
+                KeyValueConfig(
+                    bucket=ASSIGNMENTS_BUCKET,
+                    history=1,
+                    ttl=ASSIGNMENT_TTL_SEC,
+                    storage=StorageType.FILE,
+                    replicas=1,
+                )
+            )
+            log.info(
+                "created kv bucket=%s ttl=%.1fs", ASSIGNMENTS_BUCKET, ASSIGNMENT_TTL_SEC
+            )
+
+    def worker_kv_key(self) -> str:
+        return f"workers/{self.worker_key_id}"
+
+    def assignment_kv_key(self, stream_name: str) -> str:
+        return f"assign/{safe_key_part(stream_name)}"
+
+    async def run(self) -> None:
+        await self.connect()
+        assert self.js is not None
+
+        self.opus_sub = await self.js.pull_subscribe(
+            OPUS_SUBJECT,
+            durable=self.durable_name,
+            stream=OPUS_STREAM,
+        )
+        self.events_sub = await self.js.pull_subscribe(
+            STREAM_EVENTS_SUBJECT,
+            durable=f"{self.durable_name}-events",
+            stream=STREAM_EVENTS_STREAM,
+        )
+
+        hb = asyncio.create_task(self.heartbeat_loop())
+
+        log.info(
+            "subscribed opus=%s events=%s durable=%s",
+            OPUS_SUBJECT,
+            STREAM_EVENTS_SUBJECT,
+            self.durable_name,
+        )
+
+        try:
+            while not self.stop_event.is_set():
+                await self.publish_worker_heartbeat()
+                await self.poll_events()
+                await self.poll_audio()
+                await self.try_start_pending_streams()
+                await self.cleanup_idle_streams()
+        finally:
+            hb.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await hb
+            await self.shutdown()
+
+    async def heartbeat_loop(self) -> None:
+        try:
+            while not self.stop_event.is_set():
+                await self.publish_worker_heartbeat()
+                await asyncio.sleep(WORKER_HEARTBEAT_SEC)
+        except asyncio.CancelledError:
+            pass
+
+    async def publish_worker_heartbeat(self) -> None:
+        payload = json.dumps(
+            {
+                "worker_id": self.worker_id,
+                "worker_key_id": self.worker_key_id,
+                "active_streams": self.active_streams,
+                "max_audio_streams": MAX_AUDIO_STREAMS,
+                "ts": time.time(),
+            }
+        ).encode("utf-8")
+        await self.workers_kv.put(self.worker_kv_key(), payload)
+
+    async def poll_events(self) -> None:
+        try:
+            msgs = await self.events_sub.fetch(batch=FETCH_BATCH, timeout=0.1)
+        except asyncio.TimeoutError:
+            return
+        except Exception as e:
+            log.exception("event fetch error: %s", e)
+            return
+
+        for msg in msgs:
+            await self.handle_event(msg)
+
+    async def poll_audio(self) -> None:
+        try:
+            msgs = await self.opus_sub.fetch(batch=FETCH_BATCH, timeout=FETCH_TIMEOUT)
+        except asyncio.TimeoutError:
+            return
+        except Exception as e:
+            log.exception("audio fetch error: %s", e)
+            return
+
+        for msg in msgs:
+            await self.handle_audio(msg)
+
+    async def handle_event(self, msg: Msg) -> None:
+        try:
+            stream_name = self.stream_name_from_event(msg)
+            if not stream_name:
+                await msg.ack()
+                return
+
+            if msg.subject.startswith("streams.active."):
+                self.pending_streams.add(stream_name)
+                if stream_name not in self.streams:
+                    self.streams[stream_name] = StreamState(stream_name=stream_name)
+                self.streams[stream_name].last_seen = time.time()
+                log.info("stream discovered stream_name=%s", stream_name)
+            elif msg.subject.startswith("streams.inactive."):
+                self.pending_streams.discard(stream_name)
+                state = self.streams.get(stream_name)
+                if state is not None:
+                    state.last_seen = time.time()
+                    if not state.owned and state.task is None:
+                        self.streams.pop(stream_name, None)
+
+            await msg.ack()
+        except Exception as e:
+            log.exception("event handling error: %s", e)
+            await msg.nak()
+
+    async def handle_audio(self, msg: Msg) -> None:
+        try:
+            stream_name = self.stream_name_from_audio(msg)
+            if not stream_name:
+                await msg.ack()
+                return
+
+            chunk = self.decode_opus_chunk(msg.data, stream_name)
+        except Exception as e:
+            log.exception("decode error: %s", e)
+            await msg.nak()
+            return
+
+        state = self.streams.get(stream_name)
+        if state is None:
+            state = StreamState(stream_name=stream_name)
+            self.streams[stream_name] = state
+
+        state.last_seen = time.time()
+
+        assigned = await self.get_assignment(stream_name)
+        if assigned is None:
+            if not state.owned and self.active_streams < MAX_AUDIO_STREAMS:
+                if await self.try_assign(stream_name):
+                    state.owned = True
+                    state.task = asyncio.create_task(self.process_stream(state))
+                    self.active_streams += 1
+                    self.pending_streams.discard(stream_name)
+                    log.info(
+                        "stream owned stream_name=%s active=%d/%d",
+                        stream_name,
+                        self.active_streams,
+                        MAX_AUDIO_STREAMS,
+                    )
+                else:
+                    await msg.ack()
+                    return
+            elif not state.owned:
+                self.pending_streams.add(stream_name)
+                await msg.ack()
+                return
+        elif assigned != self.worker_id:
+            await msg.ack()
+            return
+        elif not state.owned:
+            state.owned = True
+            if state.task is None:
+                state.task = asyncio.create_task(self.process_stream(state))
+                self.active_streams += 1
+                log.info(
+                    "stream owned stream_name=%s active=%d/%d",
+                    stream_name,
+                    self.active_streams,
+                    MAX_AUDIO_STREAMS,
+                )
+
+        await state.queue.put(PendingItem(msg=msg, chunk=chunk))
+
+    async def get_assignment(self, stream_name: str) -> Optional[str]:
+        try:
+            entry = await self.assign_kv.get(self.assignment_kv_key(stream_name))
+            if entry is None:
+                return None
+            data = json.loads(entry.value.decode("utf-8"))
+            return data.get("worker_id")
+        except Exception:
+            return None
+
+    async def try_assign(self, stream_name: str) -> bool:
+        try:
+            payload = json.dumps(
+                {
+                    "worker_id": self.worker_id,
+                    "worker_key_id": self.worker_key_id,
+                    "active_streams": self.active_streams,
+                    "ts": time.time(),
+                }
+            ).encode("utf-8")
+            await self.assign_kv.create(self.assignment_kv_key(stream_name), payload)
+            return True
+        except Exception:
+            return False
+
+    async def renew_assign(self, stream_name: str) -> bool:
+        try:
+            entry = await self.assign_kv.get(self.assignment_kv_key(stream_name))
+            if entry is None:
+                return False
+
+            data = json.loads(entry.value.decode("utf-8"))
+            if data.get("worker_id") != self.worker_id:
+                return False
+
+            payload = json.dumps(
+                {
+                    "worker_id": self.worker_id,
+                    "worker_key_id": self.worker_key_id,
+                    "active_streams": self.active_streams,
+                    "ts": time.time(),
+                }
+            ).encode("utf-8")
+            await self.assign_kv.put(self.assignment_kv_key(stream_name), payload)
+            return True
+        except Exception:
+            return False
+
+    async def release_assign(self, stream_name: str) -> None:
+        try:
+            await self.assign_kv.delete(self.assignment_kv_key(stream_name))
+        except Exception:
+            pass
+
+    async def process_stream(self, state: StreamState) -> None:
+        log.info("processor started stream_name=%s", state.stream_name)
+
+        try:
+            while not self.stop_event.is_set() and state.owned and not state.closing:
+                try:
+                    item = await asyncio.wait_for(state.queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    if self._should_stop_stream(state):
+                        break
+                    await self.renew_assign(state.stream_name)
+                    continue
+
+                delay = random.uniform(MIN_DELAY_SEC, MAX_DELAY_SEC)
+                await asyncio.sleep(delay)
+
+                subtitle_text = self.random_subtitle()
+                subtitle_payload = subtitle_text.encode("utf-8")
+                subject = f"subtitles.{safe_key_part(state.stream_name)}"
+
+                headers = {
+                    "X-Stream-Name": state.stream_name,
+                    "X-Source-Seq": str(item.chunk.seq),
+                    "X-Source-PTS": str(item.chunk.pts),
+                    "X-Source-Timestamp": str(item.chunk.timestamp),
+                    "X-Model": "stub",
+                    "X-Delay-Sec": f"{delay:.3f}",
+                    "X-Worker-ID": self.worker_id,
+                }
+
+                try:
+                    ack = await self.js.publish(
+                        subject, subtitle_payload, headers=headers
+                    )
+                    log.info(
+                        "subtitle published subject=%s stream_name=%s seq=%d delay=%.3fs subtitle=%s nats_seq=%d",
+                        subject,
+                        state.stream_name,
+                        item.chunk.seq,
+                        delay,
+                        subtitle_text,
+                        ack.seq,
+                    )
+                    await item.msg.ack()
+                    await self.renew_assign(state.stream_name)
+                except Exception as e:
+                    log.exception(
+                        "subtitle publish error stream_name=%s seq=%d err=%s",
+                        state.stream_name,
+                        item.chunk.seq,
+                        e,
+                    )
+                    try:
+                        await item.msg.nak()
+                    except Exception:
+                        pass
+        finally:
+            await self.finish_stream(state)
+
+    def random_subtitle(self) -> str:
+        n = random.randint(SUBTITLE_MIN_LEN, SUBTITLE_MAX_LEN)
+        return "".join(random.choices(LATIN, k=n))
+
+    async def finish_stream(self, state: StreamState) -> None:
+        if state.closing:
+            return
+
+        state.closing = True
+        state.owned = False
+
+        if state.task is not None:
+            state.task.cancel()
+            with contextlib.suppress(Exception):
+                await state.task
+
+        await self.release_assign(state.stream_name)
+
+        self.streams.pop(state.stream_name, None)
+        self.pending_streams.discard(state.stream_name)
+        self.active_streams = max(0, self.active_streams - 1)
+
+        log.info(
+            "stream released stream_name=%s active=%d/%d",
+            state.stream_name,
+            self.active_streams,
+            MAX_AUDIO_STREAMS,
+        )
+
+    def _should_stop_stream(self, state: StreamState) -> bool:
+        return (
+            state.queue.empty()
+            and (time.time() - state.last_seen) > IDLE_STREAM_TTL_SEC
+        )
+
+    async def cleanup_idle_streams(self) -> None:
+        for state in list(self.streams.values()):
+            if (
+                state.owned
+                and state.task is not None
+                and state.task.done()
+                and state.queue.empty()
+            ):
+                await self.finish_stream(state)
+
+    async def try_start_pending_streams(self) -> None:
+        if self.active_streams >= MAX_AUDIO_STREAMS:
+            return
+
+        for stream_name in list(self.pending_streams):
+            if self.active_streams >= MAX_AUDIO_STREAMS:
+                break
+
+            state = self.streams.get(stream_name)
+            if state is None or state.owned or state.closing:
+                self.pending_streams.discard(stream_name)
+                continue
+
+            assigned = await self.get_assignment(stream_name)
+            if assigned is None:
+                if self.active_streams < MAX_AUDIO_STREAMS and await self.try_assign(
+                    stream_name
+                ):
+                    state.owned = True
+                    state.task = asyncio.create_task(self.process_stream(state))
+                    self.active_streams += 1
+                    self.pending_streams.discard(stream_name)
+                    log.info(
+                        "stream owned stream_name=%s active=%d/%d",
+                        stream_name,
+                        self.active_streams,
+                        MAX_AUDIO_STREAMS,
+                    )
+            elif assigned == self.worker_id and not state.owned:
+                state.owned = True
+                if state.task is None:
+                    state.task = asyncio.create_task(self.process_stream(state))
+                    self.active_streams += 1
+                    self.pending_streams.discard(stream_name)
+                    log.info(
+                        "stream owned stream_name=%s active=%d/%d",
+                        stream_name,
+                        self.active_streams,
+                        MAX_AUDIO_STREAMS,
+                    )
+
+    async def publish_worker_heartbeat(self) -> None:
+        payload = json.dumps(
+            {
+                "worker_id": self.worker_id,
+                "worker_key_id": self.worker_key_id,
+                "active_streams": self.active_streams,
+                "max_audio_streams": MAX_AUDIO_STREAMS,
+                "ts": time.time(),
+            }
+        ).encode("utf-8")
+        await self.workers_kv.put(self.worker_kv_key(), payload)
+
+    def stream_name_from_event(self, msg: Msg) -> str:
+        if msg.headers:
+            v = msg.headers.get("X-Stream-Name", "")
+            if v:
+                return v
+        if msg.subject.startswith("streams.active."):
+            return msg.subject.removeprefix("streams.active.")
+        if msg.subject.startswith("streams.inactive."):
+            return msg.subject.removeprefix("streams.inactive.")
+        return ""
+
+    def stream_name_from_audio(self, msg: Msg) -> str:
+        if msg.headers:
+            v = msg.headers.get("X-Stream-Name", "")
+            if v:
+                return v
+        if msg.subject.startswith("opus.segments."):
+            return msg.subject.removeprefix("opus.segments.")
+        return ""
+
+    def decode_opus_chunk(self, data: bytes, stream_name: str) -> OpusChunk:
+        if len(data) < 18:
+            raise ValueError(f"message too short: {len(data)} bytes")
+
+        seq, timestamp, pts, payload_len = struct.unpack(">HIqI", data[:18])
+        payload = data[18 : 18 + payload_len]
+
+        if len(payload) != payload_len:
+            raise ValueError("payload length mismatch")
+
+        return OpusChunk(
+            stream_name=stream_name,
+            seq=seq,
+            timestamp=timestamp,
+            pts=pts,
+            payload=payload,
+        )
+
+    async def shutdown(self) -> None:
+        self.stop_event.set()
+
+        states = list(self.streams.values())
+        for state in states:
+            state.closing = True
+            state.owned = False
+            if state.task is not None:
+                state.task.cancel()
+
+        for state in states:
+            with contextlib.suppress(Exception):
+                if state.task is not None:
+                    await state.task
+            await self.release_assign(state.stream_name)
+
+        self.streams.clear()
+        self.pending_streams.clear()
+        self.active_streams = 0
+
+        if self.workers_kv is not None:
+            with contextlib.suppress(Exception):
+                await self.workers_kv.delete(self.worker_kv_key())
+
+        if self.nc is not None:
+            await self.nc.drain()
+            await self.nc.close()
+
+        log.info("whisper worker stopped")
+
+
+async def main() -> None:
+    worker = WhisperWorker()
+    await worker.connect()
+
+    async def loop() -> None:
+        assert worker.js is not None
+        worker.opus_sub = await worker.js.pull_subscribe(
+            OPUS_SUBJECT,
+            durable=worker.durable_name,
+            stream=OPUS_STREAM,
+        )
+        worker.events_sub = await worker.js.pull_subscribe(
+            STREAM_EVENTS_SUBJECT,
+            durable=f"{worker.durable_name}-events",
+            stream=STREAM_EVENTS_STREAM,
+        )
+
+        hb = asyncio.create_task(worker.heartbeat_loop())
+        try:
+            while not worker.stop_event.is_set():
+                await worker.publish_worker_heartbeat()
+
+                try:
+                    events = await worker.events_sub.fetch(
+                        batch=FETCH_BATCH, timeout=0.1
+                    )
+                    for msg in events:
+                        await worker.handle_event(msg)
+                except asyncio.TimeoutError:
+                    pass
+
+                try:
+                    audio = await worker.opus_sub.fetch(
+                        batch=FETCH_BATCH, timeout=FETCH_TIMEOUT
+                    )
+                    for msg in audio:
+                        await worker.handle_audio(msg)
+                except asyncio.TimeoutError:
+                    pass
+
+                await worker.try_start_pending_streams()
+                await worker.cleanup_idle_streams()
+        finally:
+            hb.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await hb
+            await worker.shutdown()
+
+    try:
+        await loop()
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    import contextlib
+
+    asyncio.run(main())

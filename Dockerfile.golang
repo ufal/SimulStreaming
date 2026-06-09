@@ -1,0 +1,41 @@
+# syntax=docker/dockerfile:1.7
+
+FROM golang:1.25-alpine AS builder
+
+ARG APP_DIR
+ARG APP_BIN
+
+WORKDIR /src
+
+RUN apk add --no-cache \
+    ca-certificates \
+    build-base \
+    pkgconf \
+    opus-dev \
+    opusfile-dev
+
+COPY ${APP_DIR}/go.mod ${APP_DIR}/go.sum ./
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+COPY ${APP_DIR}/cmd ./cmd
+COPY ${APP_DIR}/internal ./internal
+
+ENV CGO_ENABLED=1
+
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    go build -o /out/${APP_BIN} ./cmd/main
+
+
+FROM alpine:3.21
+
+ARG APP_BIN
+
+RUN apk add --no-cache ca-certificates opus opusfile
+
+WORKDIR /app
+
+COPY --from=builder /out/${APP_BIN} /app/${APP_BIN}
+
+ENTRYPOINT ["/bin/sh", "-c", "exec /app/$APP_BIN"]

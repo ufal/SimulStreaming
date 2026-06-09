@@ -1,0 +1,17 @@
+FROM oven/bun:1
+
+WORKDIR /app
+
+COPY frontend/package.json ./
+
+RUN bun install
+
+COPY frontend/public ./public
+COPY frontend/server.js ./server.js
+
+ENV NODE_ENV=production
+ENV PORT=8000
+
+EXPOSE 8000
+
+CMD ["bun", "server.js"]

@@ -1,0 +1,15 @@
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.zip
+**/*.log
+**/*.tmp
+**/*.swp
+**/*.swo
+.whisper-worker/
+whisper-worker/
+frontend/node_modules/
+frontend/.bun/
+assets/
+README.md
+LICENSE
