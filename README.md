@@ -290,7 +290,7 @@ Note that the very first segment and hypothesis `seg_00002/iter_00001_hypothesis
 
 The entry point `simulstreaming_whisper_server.py` has the same model options as `simulstreaming_whisper.py`, plus:
 - `--host` and `--port` of the TCP connection, 
-- `--warmup-file`: the warmup audio file is decoded by the Whisper backend after the model is loaded because without that, processing of the very the first input chunk may take longer.
+- `--warmup-file`: the warmup audio file is decoded by the Whisper backend after the model is loaded because without that, processing of the very first input chunk may take longer.
 
 See the help message (`-h` option).
 
