@@ -57,6 +57,8 @@ hovercraft_translations = {
     "uk": "Моє судно на повітряній подушці наповнене вуграми.",
     # chatGPT provided:
 #        "uk": "Мій ховеркрафт повний вугрів."
+
+    "he": "הרחפת שלי מלאה בצלופחים.",
 }
 def hovercraft_sentence(lang_code):
     return hovercraft_translations[lang_code]
