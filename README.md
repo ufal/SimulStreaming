@@ -180,52 +180,6 @@ After these three columns, there is one space, and then the text. Notice that th
 
 End of voice or word-level segments are not indicated in this format.
 
-**Debug: Logdir**
-
-With `--logdir LOGDIR` and `--vac` parameters, the tool will create a directory named LOGDIR. In this dir, there will be subdirectories for each voiced segment. Inside, for each chunk update, there will be: 
-- an audio file with exact content of the audio buffer,
-- text hypothesis file, containing the context, decoder text buffer used for forced decoding, and the hypothesis.
-
-The file structure may look like this:
-
-```
-seg_00002:
-iter_00001_audio.wav  iter_00001_hypothesis.txt
-
-seg_00004:
-iter_00002_audio.wav       iter_00003_audio.wav       iter_00004_audio.wav       iter_00005_audio.wav
-iter_00002_hypothesis.txt  iter_00003_hypothesis.txt  iter_00004_hypothesis.txt  iter_00005_hypothesis.txt
-
-...
-```
-
-The hypotheses files may contain:
-
-```
-==> seg_00002/iter_00001_hypothesis.txt <==
-CONTEXT+FORCED:	<|startoftranscript|><|en|><|transcribe|><|notimestamps|>
-HYPOTHESIS:	 And so
-
-==> seg_00004/iter_00002_hypothesis.txt <==
-CONTEXT+FORCED:	<|startoftranscript|><|en|><|transcribe|><|notimestamps|>
-HYPOTHESIS:	 And so,
-
-==> seg_00004/iter_00003_hypothesis.txt <==
-CONTEXT+FORCED:	<|startoftranscript|><|en|><|transcribe|><|notimestamps|> And so,
-HYPOTHESIS:	 my fellow Americans
-
-==> seg_00004/iter_00004_hypothesis.txt <==
-CONTEXT+FORCED:	<|startoftranscript|><|en|><|transcribe|><|notimestamps|> And so, my fellow Americans
-HYPOTHESIS:	, ask
-
-==> seg_00004/iter_00005_hypothesis.txt <==
-CONTEXT+FORCED:	<|startoftranscript|><|en|><|transcribe|><|notimestamps|> And so, my fellow Americans, ask
-HYPOTHESIS:	 not.
-```
-
-Note that the very first segment and hypothesis `seg_00002/iter_00001_hypothesis.txt` is from "warm-up" processing. Before beginning of each compuatationally aware simulation, the first 1 second is processed by model so that the following updates are faster.
-
-
 ### Usage: Server -- real-time from mic 
 
 The entry point `simulstreaming_canary_server.py` has the same model options as `simulstreaming_canary.py`, plus:
