@@ -202,35 +202,3 @@ arecord -f S16_LE -c1 -r 16000 -t raw -D default | nc localhost 43001
 
 **Windows/Mac**: `ffmpeg` may substitute `arecord`. Or use the solutions proposed in Whisper-Streaming pull requests [#111](https://github.com/ufal/whisper_streaming/pull/111) and [#123](https://github.com/ufal/whisper_streaming/pull/123).
 
-
-### Usage: As a module
-
-Analogically to using [WhisperStreaming as a module](https://github.com/ufal/whisper_streaming?tab=readme-ov-file#as-a-module).
-
-**ELITR**:
-
-SimulStreaming is one of follow up projects of [ELITR](https://elitr.eu) (European Live Translator, 2019-2022). It is designed as one of the tools in a complex distributed pipeline for long-form monologue speech transcription and translation between many languages (ref. to papers: [1](https://aclanthology.org/2020.iwltp-1.7/),[2](https://aclanthology.org/2021.mtsummit-asltrw.3/),[3](https://aclanthology.org/2021.eacl-demos.32/)). The other tools usable in such pipelines, as well as in other projects, are e.g. [Pipeliner](https://github.com/ELITR/pipeliner), [MT-wrapper](https://github.com/ELITR/mt-wrapper/), a front-end web application [online-text-flow](https://github.com/ELITR/online-text-flow), or a tool for [ASR latency evaluation](github.com/ufal/asr_latency).
-
-## 📣 Feedback Welcome!
-
-We, the authors of SimulStreaming from Charles University, are committed to
-improving our research and the tool itself. Your experience as a user is
-invaluable to us --- it can help to shape upcoming features, licensing models, and support services. 
-
-To better understand your needs and guide the future of
-SimulStreaming, we kindly ask the users, especially commercial, to fill out this **[questionnaire](https://forms.cloud.microsoft/e/7tCxb4gJfB).**
-
-## 📄 Licence
-
-MIT.
-
-## 🤝 Contributions
-
-Contributions welcome. 
-
-A remarkable contribution project that integrates SimulStreaming is [WhisperLiveKit](https://github.com/QuentinFuxa/WhisperLiveKit).
-
-## ✉️ Contact
-
-[Dominik Macháček](https://ufal.mff.cuni.cz/dominik-machacek/), machacek@ufal.mff.cuni.cz
-
