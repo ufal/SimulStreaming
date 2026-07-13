@@ -10,6 +10,26 @@ from simulstreaming.whisper.simul_whisper.simul_whisper import PaddedAlignAttWhi
 
 logger = logging.getLogger(__name__)
 
+def incomplete_utf8_tail_len(data):
+    """Return the number of trailing bytes of `data` that form the beginning of an
+    unfinished UTF-8 character, or 0 if `data` ends with a complete character.
+    """
+    # scan back over at most 3 continuation bytes to find the last lead byte
+    for back in range(1, min(3, len(data)) + 1):
+        byte = data[-back]
+        if 0x80 <= byte <= 0xBF:  # continuation byte, keep scanning
+            continue
+        if byte >= 0xF0:
+            need = 4  # lead byte of a 4-byte character
+        elif byte >= 0xE0:
+            need = 3
+        elif byte >= 0xC0:
+            need = 2
+        else:
+            need = 1  # ASCII
+        return back if back < need else 0
+    return 0
+
 def simulwhisper_args(parser):
     group = parser.add_argument_group('Whisper arguments')
     group.add_argument('--model_path', type=str, default='./large-v3.pt', 
@@ -147,6 +167,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         self.model.refresh_segment(complete=True)
 
         self.unicode_buffer = []  # hide incomplete unicode character for the next iteration
+        self.prepended_buffer_len = 0  # number of buffered tokens consumed this iteration
 
     def insert_audio_chunk(self, audio):
         self.audio_chunks.append(torch.from_numpy(audio))
@@ -156,14 +177,16 @@ class SimulWhisperOnline(OnlineProcessorInterface):
             return []
 
         pr = generation["progress"]
-        if "result" not in generation or self.unicode_buffer != []:
+        if "result" not in generation or self.prepended_buffer_len or self.unicode_buffer != []:
             split_words, split_tokens = self.model.tokenizer.split_to_word_tokens(tokens)
         else:
             split_words, split_tokens = generation["result"]["split_words"], generation["result"]["split_tokens"]
 
         frames = [p["most_attended_frames"][0] for p in pr]
-        if self.unicode_buffer != []:
-            a = [frames[0]] * len(self.unicode_buffer)
+        if frames and self.prepended_buffer_len:
+            # tokens buffered in the previous iteration have no frame of their
+            # own; reuse the first frame of this iteration for them
+            a = [frames[0]] * self.prepended_buffer_len
             frames = a + frames
             
         tokens = tokens.copy()
@@ -188,21 +211,36 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         return ret
 
     def hide_incomplete_unicode(self, tokens):
-        """Sometimes, the last token is an imcomplete unicode character, e.g. a part of "ň" or "ř".
+        """Sometimes, the last tokens are an incomplete unicode character, e.g. a part of "ň", "ř" or "好".
         Without this, the outputs can end with '�' = Unicode Replacement Character, and the next output also
         starts with '�'.
-        This function hides the last incomplete unicode character and adds it in the next iteration.
+        This function hides the tokens of the trailing incomplete unicode character and prepends them in the
+        next iteration. An incomplete character can span multiple tokens (e.g. two single-byte tokens of a
+        3-byte character), so the analysis is done on the byte level.
         """
-        if self.unicode_buffer != []:
-            logger.debug(f"Hiding incomplete unicode character: {self.unicode_buffer}")
-            tokens = self.unicode_buffer + tokens
-            self.unicode_buffer = []  # clear the buffer after processing
-        chars, _ = self.model.tokenizer.split_tokens_on_unicode(tokens)
-        if len(chars) > 0 and chars[-1].endswith('�'):
-            self.unicode_buffer = tokens[-1:]  # keep the last incomplete unicode character
-            logger.debug(f"Hiding incomplete unicode character: {tokens[-1:]}")
-            return tokens[:-1]  # remove the last token, which is incomplete unicode character
-        return tokens
+        if not tokens:
+            self.prepended_buffer_len = 0
+            return tokens  # keep the buffer for the next iteration
+        if self.unicode_buffer:
+            logger.debug(f"Prepending buffered incomplete unicode tokens: {self.unicode_buffer}")
+        self.prepended_buffer_len = len(self.unicode_buffer)
+        tokens = self.unicode_buffer + tokens
+        self.unicode_buffer = []
+
+        token_bytes = self.model.tokenizer.encoding.decode_bytes_batch([[t] for t in tokens])
+        tail = incomplete_utf8_tail_len(b"".join(token_bytes))
+        if tail == 0:
+            return tokens
+
+        # buffer the smallest suffix of tokens that covers the incomplete tail bytes
+        split = len(tokens)
+        covered = 0
+        while split > 0 and covered < tail:
+            split -= 1
+            covered += len(token_bytes[split])
+        self.unicode_buffer = tokens[split:]
+        logger.debug(f"Hiding incomplete unicode character at end: {self.unicode_buffer}")
+        return tokens[:split]
 
     def process_iter(self):
         if len(self.audio_chunks) == 0:
