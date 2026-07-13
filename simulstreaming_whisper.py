@@ -12,41 +12,41 @@ logger = logging.getLogger(__name__)
 
 def simulwhisper_args(parser):
     group = parser.add_argument_group('Whisper arguments')
-    group.add_argument('--model_path', type=str, default='./large-v3.pt', 
+    group.add_argument('--model-path', type=str, default='./large-v3.pt', 
                         help='The file path to the Whisper .pt model. If not present on the filesystem, the model is downloaded automatically.')
     group.add_argument("--beams","-b", type=int, default=1, help="Number of beams for beam search decoding. If 1, GreedyDecoder is used.")
     group.add_argument("--decoder",type=str, default=None, help="Override automatic selection of beam or greedy decoder. "
                         "If beams > 1 and greedy: invalid.")
 
     group = parser.add_argument_group('Audio buffer')
-    group.add_argument('--audio_max_len', type=float, default=30.0, 
+    group.add_argument('--audio-max-len', type=float, default=30.0, 
                         help='Max length of the audio buffer, in seconds.')
-    group.add_argument('--audio_min_len', type=float, default=0.0, 
+    group.add_argument('--audio-min-len', type=float, default=0.0, 
                         help='Skip processing if the audio buffer is shorter than this length, in seconds. Useful when the --min-chunk-size is small.')
 
 
     group = parser.add_argument_group('AlignAtt argument')
-    group.add_argument('--frame_threshold', type=int, default=25, 
+    group.add_argument('--frame-threshold', type=int, default=25, 
                         help='Threshold for the attention-guided decoding. The AlignAtt policy will decode only ' \
                             'until this number of frames from the end of audio. In frames: one frame is 0.02 seconds for large-v3 model. ')
 
     group = parser.add_argument_group('Truncation of the last decoded word (from Simul-Whisper)')
-    group.add_argument('--cif_ckpt_path', type=str, default=None, 
+    group.add_argument('--cif-ckpt-path', type=str, default=None, 
                         help='The file path to the Simul-Whisper\'s CIF model checkpoint that detects whether there is' \
                         'end of word at the end of the chunk. If not, the last decoded space-separated word is truncated ' \
                         'because it is often wrong -- transcribing a word in the middle.' \
                         'The CIF model adapted for the Whisper model version should be used. ' \
                         'Find the models in https://github.com/backspacetg/simul_whisper/tree/main/cif_models . ' \
                         'Note that there is no model for large-v3.')
-    group.add_argument("--never_fire", action=argparse.BooleanOptionalAction, default=False, 
+    group.add_argument("--never-fire", action=argparse.BooleanOptionalAction, default=False, 
                        help="Override the CIF model. If True, the last word is NEVER truncated, no matter what the CIF model detects. " \
                        ". If False: if CIF model path is set, the last word is SOMETIMES truncated, depending on the CIF detection. " \
                         "Otherwise, if the CIF model path is not set, the last word is ALWAYS trimmed.")
 
     group = parser.add_argument_group("Prompt and context")
-    group.add_argument("--init_prompt",type=str, default=None, help="Init prompt for the model. It should be in the target language.")
-    group.add_argument("--static_init_prompt",type=str, default=None, help="Do not scroll over this text. It can contain terminology that should be relevant over all document.")
-    group.add_argument("--max_context_tokens",type=int, default=None, help="Max context tokens for the model. Default is 0.")
+    group.add_argument("--init-prompt",type=str, default=None, help="Init prompt for the model. It should be in the target language.")
+    group.add_argument("--static-init-prompt",type=str, default=None, help="Do not scroll over this text. It can contain terminology that should be relevant over all document.")
+    group.add_argument("--max-context-tokens",type=int, default=None, help="Max context tokens for the model. Default is 0.")
 
 
 def simul_asr_factory(args):

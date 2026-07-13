@@ -388,7 +388,7 @@ def translate_args(parser):
                         help='Minimum number of space-delimited words to process in each LocalAgreement update. The more, the higher quality, but slower.')
     parser.add_argument('--min-len', type=int, default=1, 
                         help='Minimum number of space-delimited words at the beginning.')
-    #parser.add_argument('--start_at', type=int, default=0, help='Skip first N words.')
+    #parser.add_argument('--start-at', type=int, default=0, help='Skip first N words.')
 
     parser.add_argument('--src-lan', '--src-language', type=str, default="en", 
                         help="Source language code.",
@@ -398,12 +398,12 @@ def translate_args(parser):
                         help="Target language code.",
                         choices=lan_choices)
 
-    parser.add_argument('--sys_prompt', type=str, default=None, 
+    parser.add_argument('--sys-prompt', type=str, default=None, 
                         help='System prompt. If None, default one is used, depending on the language.')
 
-    parser.add_argument('--init_prompt_src', type=str, default=None, help='Init translation with source text. It should be a complete sentence in the source language. ' 
+    parser.add_argument('--init-prompt-src', type=str, default=None, help='Init translation with source text. It should be a complete sentence in the source language. ' 
                         'It can be context specific for the given input. Default is ')
-    parser.add_argument('--init_prompt_tgt', type=str, default=None, help='Init translation with this target. It should be example translation of init_prompt_src. '
+    parser.add_argument('--init-prompt-tgt', type=str, default=None, help='Init translation with this target. It should be example translation of init_prompt_src. '
                         ' There is default init message, depending on the language.')
 
     parser.add_argument('--len-threshold', type=float, default=None, help='Ratio of the length of the source and generated target, in number of sentencepiece tokens. '
@@ -414,7 +414,7 @@ def translate_args(parser):
 
     parser.add_argument("--max-context-length", type=int, default=4096, help="Maximum number of tokens in the model to use.")
 
-    parser.add_argument("--buffer_trimming", type=str, default="sentences", choices=["segments","sentences"], help="Buffer trimming strategy.")
+    parser.add_argument("--buffer-trimming", type=str, default="sentences", choices=["segments","sentences"], help="Buffer trimming strategy.")
 
     parser.add_argument("--model-dir", type=str, default="ct2_EuroLLM-9B-Instruct/", help="ct2 model directory. If not set, the default ct2_EuroLLM-9B-Instruct/ is used.")
     parser.add_argument("--tokenizer-dir", type=str, default="EuroLLM-9B-Instruct/", help="tokenizer directory. If not set, the default EuroLLM-9B-Instruct/ is used.")
@@ -427,10 +427,10 @@ def translate_args(parser):
 def simulation_args(parser):
     #parser.add_argument('--input-instance', type=str, default=None, help="Filename of instances to simulate input. If not set, txt input is read from stdin.")
     parser.add_argument('--input-jsonl', type=str, default=None, help="Filename of jsonl file to simulate input. If not set, it is read from stdin.")
-    #parser.add_argument('--output_instance', type=str, default=None, help="Write output as instance into this file, while also writing to stdout.")
+    #parser.add_argument('--output-instance', type=str, default=None, help="Write output as instance into this file, while also writing to stdout.")
     # maybe later
     #parser.add_argument('--offline', action="store_true", default=False, help='Offline mode.')
-    parser.add_argument('--comp_unaware', action="store_true", default=False, help='Computationally unaware simulation.')
+    parser.add_argument('--comp-unaware', action="store_true", default=False, help='Computationally unaware simulation.')
 
 
 def simul_translator_factory(args):

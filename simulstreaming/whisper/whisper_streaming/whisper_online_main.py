@@ -92,10 +92,10 @@ def set_logging(args,logger):
 def simulation_args(parser):
     simulation_group = parser.add_argument_group("Arguments for simulation from file")
     simulation_group.add_argument('audio_path', type=str, help="Filename of 16kHz mono channel wav, on which live streaming is simulated.")
-    simulation_group.add_argument('--start_at', type=float, default=0.0, help='Start processing audio at this time.')
+    simulation_group.add_argument('--start-at', type=float, default=0.0, help='Start processing audio at this time.')
     # TODO: offline mode is not implemented in SimulStreaming yet
 #    simulation_group.add_argument('--offline', action="store_true", default=False, help='Offline mode.')
-    simulation_group.add_argument('--comp_unaware', action="store_true", default=False, help='Computationally unaware simulation.')
+    simulation_group.add_argument('--comp-unaware', action="store_true", default=False, help='Computationally unaware simulation.')
 
 def main_simulation_from_file(factory, add_args=None):
     '''
@@ -117,7 +117,7 @@ def main_simulation_from_file(factory, add_args=None):
     args.offline = False  # TODO: offline mode is not implemented in SimulStreaming yet
 
     if args.offline and args.comp_unaware:
-        logger.error("No or one option from --offline and --comp_unaware are available, not both. Exiting.")
+        logger.error("No or one option from --offline and --comp-unaware are available, not both. Exiting.")
         sys.exit(1)
 
     set_logging(args,logger)
