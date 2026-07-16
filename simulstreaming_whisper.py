@@ -129,6 +129,10 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 
     def __init__(self, asr):
         self.model = asr.model
+        # Own a per-stream state so several SimulWhisperOnline instances can
+        # share one model (issue #20). Every model call below runs under
+        # ``with self.model.bind(self.state)``.
+        self.state = self.model.new_state()
         self.file = None
         self.init()
 
@@ -144,7 +148,8 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 
         self.audio_bufer_offset = self.offset
         self.last_ts = -1
-        self.model.refresh_segment(complete=True)
+        with self.model.bind(self.state):
+            self.model.refresh_segment(complete=True)
 
         self.unicode_buffer = []  # hide incomplete unicode character for the next iteration
 
@@ -214,8 +219,9 @@ class SimulWhisperOnline(OnlineProcessorInterface):
             else:
                 self.end += audio.shape[0] / self.SAMPLING_RATE
         self.audio_chunks = []
-        self.audio_bufer_offset += self.model.insert_audio(audio)
-        tokens, generation_progress = self.model.infer(is_last=self.is_last)
+        with self.model.bind(self.state):
+            self.audio_bufer_offset += self.model.insert_audio(audio)
+            tokens, generation_progress = self.model.infer(is_last=self.is_last)
 
         tokens = self.hide_incomplete_unicode(tokens)
 
@@ -250,7 +256,8 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         self.is_last = True
         o = self.process_iter()
         self.is_last = False
-        self.model.refresh_segment(complete=True)
+        with self.model.bind(self.state):
+            self.model.refresh_segment(complete=True)
         return o
     
 
