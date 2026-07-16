@@ -2,6 +2,9 @@
 
 import os
 import logging
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -26,7 +29,36 @@ logger = logging.getLogger(__name__)
 import sys
 import wave
 
-# New features added to the original version of Simul-Whisper: 
+@dataclass
+class StreamState:
+    """Per-stream mutable state of :class:`PaddedAlignAttWhisper`.
+
+    Holding this outside the model lets one loaded model instance serve several
+    independent streams (issue #20): the caller keeps one ``StreamState`` per
+    stream and binds it (``with model.bind(state): ...``) around each call, so
+    the model itself carries no per-stream state between calls.
+    """
+    kv_cache: dict = field(default_factory=dict)
+    dec_attns: list = field(default_factory=list)
+    segments: list = field(default_factory=list)
+    tokens: list = field(default_factory=list)
+    context: Any = None
+    last_attend_frame: int = 0
+    detected_language: Any = None
+    logdir_i: int = 0
+    log_segments: int = 0
+    # beam decoding is stateful too; greedy leaves these ``None``
+    inference: Any = None
+    token_decoder: Any = None
+    # language identity -- ``--lan auto`` swaps the tokenizer per stream when the
+    # language is detected, which also regenerates the initial (prompt) tokens
+    tokenizer: Any = None
+    initial_tokens: Any = None
+    initial_token_length: int = 0
+    sot_index: int = 0
+
+
+# New features added to the original version of Simul-Whisper:
 # - large-v3 model support
 # - translation support
 # - beam search
@@ -34,6 +66,12 @@ import wave
 # - context
 class PaddedAlignAttWhisper:
     def __init__(self, cfg: AlignAttConfig) -> None:
+        # Per-stream state lives in ``self._state`` so it can be swapped out to
+        # serve multiple streams from one model (issue #20). The per-stream
+        # attributes below (kv_cache, segments, tokens, ...) are properties that
+        # read/write the currently bound state; see the property block after the
+        # class definition and ``bind`` / ``new_state``.
+        self._state = StreamState()
         self.logdir_i = 0
         self.log_segments = 0
         if cfg.logdir is not None and not os.path.exists(cfg.logdir):
@@ -139,6 +177,38 @@ class PaddedAlignAttWhisper:
             self.inference.kv_cache = self.kv_cache
 
             self.token_decoder = BeamSearchDecoder(inference=self.inference, eot=self.tokenizer.eot, beam_size=cfg.beam_size)
+
+    @contextmanager
+    def bind(self, state):
+        """Temporarily make ``state`` the active per-stream state.
+
+        Used to serve multiple streams from one model (issue #20): the caller
+        wraps each model call in ``with model.bind(stream_state): ...``.
+        """
+        prev = self._state
+        self._state = state
+        try:
+            yield
+        finally:
+            self._state = prev
+
+    def new_state(self):
+        """Create and return a fresh, fully-initialized per-stream state."""
+        state = StreamState()
+        with self.bind(state):
+            # a fresh state has no tokenizer yet; create it before init_tokens
+            self.create_tokenizer(self.cfg.language if self.cfg.language != "auto" else None)
+            self.refresh_segment(complete=True)
+            self.dec_attns = []
+            self.kv_cache = {}
+            if self.decoder_type == "greedy":
+                self.token_decoder = GreedyDecoder(0.0, self.tokenizer.eot)
+            else:
+                self.inference = BeamPyTorchInference(self.model, self.initial_token_length)
+                self.inference.kv_cache = self.kv_cache
+                self.token_decoder = BeamSearchDecoder(
+                    inference=self.inference, eot=self.tokenizer.eot, beam_size=self.cfg.beam_size)
+        return state
 
     def create_tokenizer(self, language=None):
         self.tokenizer = tokenizer.get_tokenizer(
@@ -647,3 +717,24 @@ class PaddedAlignAttWhisper:
 
         # TODO: generation progress can be also saved in a readable format
         #logger.debug(f"generation progress: {generation}")
+
+
+# Per-stream attributes delegate to the currently bound StreamState so that one
+# PaddedAlignAttWhisper instance can serve several streams (issue #20). Defined
+# here so the method bodies above stay unchanged -- they still read/write
+# ``self.kv_cache``, ``self.segments`` etc., which now route to ``self._state``.
+def _stream_property(_name):
+    return property(
+        lambda self: getattr(self._state, _name),
+        lambda self, value: setattr(self._state, _name, value),
+    )
+
+
+for _field_name in (
+    "kv_cache", "dec_attns", "segments", "tokens", "context",
+    "last_attend_frame", "detected_language", "logdir_i", "log_segments",
+    "inference", "token_decoder",
+    "tokenizer", "initial_tokens", "initial_token_length", "sot_index",
+):
+    setattr(PaddedAlignAttWhisper, _field_name, _stream_property(_field_name))
+del _field_name

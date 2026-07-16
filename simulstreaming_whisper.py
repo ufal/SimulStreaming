@@ -129,6 +129,10 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 
     def __init__(self, asr):
         self.model = asr.model
+        # Own a per-stream state so several SimulWhisperOnline instances can
+        # share one model (issue #20). Every model call below runs under
+        # ``with self.model.bind(self.state)``.
+        self.state = self.model.new_state()
         self.file = None
         self.init()
 
@@ -144,7 +148,8 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 
         self.audio_bufer_offset = self.offset
         self.last_ts = -1
-        self.model.refresh_segment(complete=True)
+        with self.model.bind(self.state):
+            self.model.refresh_segment(complete=True)
 
         self.unicode_buffer = []  # hide incomplete unicode character for the next iteration
 
@@ -157,7 +162,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 
         pr = generation["progress"]
         if "result" not in generation or self.unicode_buffer != []:
-            split_words, split_tokens = self.model.tokenizer.split_to_word_tokens(tokens)
+            split_words, split_tokens = self.state.tokenizer.split_to_word_tokens(tokens)
         else:
             split_words, split_tokens = generation["result"]["split_words"], generation["result"]["split_tokens"]
 
@@ -197,7 +202,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
             logger.debug(f"Hiding incomplete unicode character: {self.unicode_buffer}")
             tokens = self.unicode_buffer + tokens
             self.unicode_buffer = []  # clear the buffer after processing
-        chars, _ = self.model.tokenizer.split_tokens_on_unicode(tokens)
+        chars, _ = self.state.tokenizer.split_tokens_on_unicode(tokens)
         if len(chars) > 0 and chars[-1].endswith('�'):
             self.unicode_buffer = tokens[-1:]  # keep the last incomplete unicode character
             logger.debug(f"Hiding incomplete unicode character: {tokens[-1:]}")
@@ -214,12 +219,13 @@ class SimulWhisperOnline(OnlineProcessorInterface):
             else:
                 self.end += audio.shape[0] / self.SAMPLING_RATE
         self.audio_chunks = []
-        self.audio_bufer_offset += self.model.insert_audio(audio)
-        tokens, generation_progress = self.model.infer(is_last=self.is_last)
+        with self.model.bind(self.state):
+            self.audio_bufer_offset += self.model.insert_audio(audio)
+            tokens, generation_progress = self.model.infer(is_last=self.is_last)
 
         tokens = self.hide_incomplete_unicode(tokens)
 
-        text = self.model.tokenizer.decode(tokens)
+        text = self.state.tokenizer.decode(tokens)
         if len(text) == 0:
             return {}
         
@@ -250,7 +256,8 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         self.is_last = True
         o = self.process_iter()
         self.is_last = False
-        self.model.refresh_segment(complete=True)
+        with self.model.bind(self.state):
+            self.model.refresh_segment(complete=True)
         return o
     
 
