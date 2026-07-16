@@ -162,7 +162,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 
         pr = generation["progress"]
         if "result" not in generation or self.unicode_buffer != []:
-            split_words, split_tokens = self.model.tokenizer.split_to_word_tokens(tokens)
+            split_words, split_tokens = self.state.tokenizer.split_to_word_tokens(tokens)
         else:
             split_words, split_tokens = generation["result"]["split_words"], generation["result"]["split_tokens"]
 
@@ -202,7 +202,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
             logger.debug(f"Hiding incomplete unicode character: {self.unicode_buffer}")
             tokens = self.unicode_buffer + tokens
             self.unicode_buffer = []  # clear the buffer after processing
-        chars, _ = self.model.tokenizer.split_tokens_on_unicode(tokens)
+        chars, _ = self.state.tokenizer.split_tokens_on_unicode(tokens)
         if len(chars) > 0 and chars[-1].endswith('�'):
             self.unicode_buffer = tokens[-1:]  # keep the last incomplete unicode character
             logger.debug(f"Hiding incomplete unicode character: {tokens[-1:]}")
@@ -225,7 +225,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
 
         tokens = self.hide_incomplete_unicode(tokens)
 
-        text = self.model.tokenizer.decode(tokens)
+        text = self.state.tokenizer.decode(tokens)
         if len(text) == 0:
             return {}
         

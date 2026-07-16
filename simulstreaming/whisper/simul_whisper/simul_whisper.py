@@ -50,6 +50,12 @@ class StreamState:
     # beam decoding is stateful too; greedy leaves these ``None``
     inference: Any = None
     token_decoder: Any = None
+    # language identity -- ``--lan auto`` swaps the tokenizer per stream when the
+    # language is detected, which also regenerates the initial (prompt) tokens
+    tokenizer: Any = None
+    initial_tokens: Any = None
+    initial_token_length: int = 0
+    sot_index: int = 0
 
 
 # New features added to the original version of Simul-Whisper:
@@ -190,6 +196,8 @@ class PaddedAlignAttWhisper:
         """Create and return a fresh, fully-initialized per-stream state."""
         state = StreamState()
         with self.bind(state):
+            # a fresh state has no tokenizer yet; create it before init_tokens
+            self.create_tokenizer(self.cfg.language if self.cfg.language != "auto" else None)
             self.refresh_segment(complete=True)
             self.dec_attns = []
             self.kv_cache = {}
@@ -726,6 +734,7 @@ for _field_name in (
     "kv_cache", "dec_attns", "segments", "tokens", "context",
     "last_attend_frame", "detected_language", "logdir_i", "log_segments",
     "inference", "token_decoder",
+    "tokenizer", "initial_tokens", "initial_token_length", "sot_index",
 ):
     setattr(PaddedAlignAttWhisper, _field_name, _stream_property(_field_name))
 del _field_name
