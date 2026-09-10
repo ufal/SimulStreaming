@@ -86,7 +86,15 @@ class LLMTranslator:
         for step_result in step_results:
             res.append(step_result)
 
-        return self.sp.decode([r.token_id for r in res])
+        # Decode with the HF tokenizer (skip_special_tokens=True), not the raw
+        # sentencepiece model: chat-template tokens such as Gemma's
+        # <end_of_turn> or Tower's <|im_end|> are added on top of the base
+        # sentencepiece vocab and aren't known to self.sp, so self.sp.decode()
+        # either leaks them as literal text or raises OUT_OF_RANGE for ids
+        # beyond the base vocab size. self.tokenizer already carries the
+        # correct special tokens for whatever model_dir/tokenizer_dir was
+        # loaded, so this generalizes across LLMs instead of hardcoding a tag.
+        return self.tokenizer.decode([r.token_id for r in res], skip_special_tokens=True)
 
 class ParallelTextBuffer:
     def __init__(self, tokenizer, max_tokens, trimming="segments", init_src="", init_tgt=""):
