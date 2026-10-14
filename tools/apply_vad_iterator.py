@@ -11,7 +11,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--vac-chunk-size', type=float, default=0.04, 
                     help='VAC sample size in seconds.')
 parser.add_argument('audio_path', type=str, help="Filename of 16kHz mono channel wav, on which live streaming is simulated.")
-parser.add_argument('--start_at', type=float, default=0.0, help='Start processing audio at this time.')
+parser.add_argument('--start-at', type=float, default=0.0, help='Start processing audio at this time.')
 
 
 args = parser.parse_args()

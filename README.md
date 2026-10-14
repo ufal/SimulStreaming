@@ -72,10 +72,10 @@ Recommended HW is GPU with at least 10G VRAM, to run the best-performing Whisper
 ```
 $ python3 simulstreaming_whisper.py -h
 usage: simulstreaming_whisper.py [-h] [--min-chunk-size MIN_CHUNK_SIZE] [--lan LAN] [--task {transcribe,translate}] [--vac] [--vac-chunk-size VAC_CHUNK_SIZE]
-                                 [-l {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--logdir LOGDIR] [--out-txt] [--model_path MODEL_PATH] [--beams BEAMS] [--decoder DECODER]
-                                 [--audio_max_len AUDIO_MAX_LEN] [--audio_min_len AUDIO_MIN_LEN] [--frame_threshold FRAME_THRESHOLD] [--cif_ckpt_path CIF_CKPT_PATH]
-                                 [--never_fire | --no-never_fire] [--init_prompt INIT_PROMPT] [--static_init_prompt STATIC_INIT_PROMPT] [--max_context_tokens MAX_CONTEXT_TOKENS]
-                                 [--start_at START_AT] [--comp_unaware]
+                                 [-l {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--logdir LOGDIR] [--out-txt] [--model-path MODEL_PATH] [--beams BEAMS] [--decoder DECODER]
+                                 [--audio-max-len AUDIO_MAX_LEN] [--audio-min-len AUDIO_MIN_LEN] [--frame-threshold FRAME_THRESHOLD] [--cif-ckpt-path CIF_CKPT_PATH]
+                                 [--never-fire | --no-never-fire] [--init-prompt INIT_PROMPT] [--static-init-prompt STATIC_INIT_PROMPT] [--max-context-tokens MAX_CONTEXT_TOKENS]
+                                 [--start-at START_AT] [--comp-unaware]
                                  audio_path
 
 options:
@@ -98,59 +98,59 @@ WhisperStreaming processor arguments (shared for simulation from file and for th
                         VAC sample size in seconds.
 
 Whisper arguments:
-  --model_path MODEL_PATH
+  --model-path MODEL_PATH
                         The file path to the Whisper .pt model. If not present on the filesystem, the model is downloaded automatically.
   --beams BEAMS, -b BEAMS
                         Number of beams for beam search decoding. If 1, GreedyDecoder is used.
   --decoder DECODER     Override automatic selection of beam or greedy decoder. If beams > 1 and greedy: invalid.
 
 Audio buffer:
-  --audio_max_len AUDIO_MAX_LEN
+  --audio-max-len AUDIO_MAX_LEN
                         Max length of the audio buffer, in seconds.
-  --audio_min_len AUDIO_MIN_LEN
+  --audio-min-len AUDIO_MIN_LEN
                         Skip processing if the audio buffer is shorter than this length, in seconds. Useful when the --min-chunk-size is small.
 
 AlignAtt argument:
-  --frame_threshold FRAME_THRESHOLD
+  --frame-threshold FRAME_THRESHOLD
                         Threshold for the attention-guided decoding. The AlignAtt policy will decode only until this number of frames from the end of audio. In frames: one frame is 0.02
                         seconds for large-v3 model.
 
 Truncation of the last decoded word (from Simul-Whisper):
-  --cif_ckpt_path CIF_CKPT_PATH
+  --cif-ckpt-path CIF_CKPT_PATH
                         The file path to the Simul-Whisper's CIF model checkpoint that detects whether there isend of word at the end of the chunk. If not, the last decoded space-
                         separated word is truncated because it is often wrong -- transcribing a word in the middle.The CIF model adapted for the Whisper model version should be used. Find
                         the models in https://github.com/backspacetg/simul_whisper/tree/main/cif_models . Note that there is no model for large-v3.
-  --never_fire, --no-never_fire
+  --never-fire, --no-never-fire
                         Override the CIF model. If True, the last word is NEVER truncated, no matter what the CIF model detects. . If False: if CIF model path is set, the last word is
                         SOMETIMES truncated, depending on the CIF detection. Otherwise, if the CIF model path is not set, the last word is ALWAYS trimmed. (default: False)
 
 Prompt and context:
-  --init_prompt INIT_PROMPT
+  --init-prompt INIT_PROMPT
                         Init prompt for the model. It should be in the target language.
-  --static_init_prompt STATIC_INIT_PROMPT
+  --static-init-prompt STATIC_INIT_PROMPT
                         Do not scroll over this text. It can contain terminology that should be relevant over all document.
-  --max_context_tokens MAX_CONTEXT_TOKENS
+  --max-context-tokens MAX_CONTEXT_TOKENS
                         Max context tokens for the model. Default is 0.
 
 Arguments for simulation from file:
   audio_path            Filename of 16kHz mono channel wav, on which live streaming is simulated.
-  --start_at START_AT   Start processing audio at this time.
-  --comp_unaware        Computationally unaware simulation.
+  --start-at START_AT   Start processing audio at this time.
+  --comp-unaware        Computationally unaware simulation.
 ```
 
 **Example:**
 
 ```
-python3 simulstreaming_whisper.py audio.wav --language en --task transcribe --comp_unaware --vac
+python3 simulstreaming_whisper.py audio.wav --language en --task transcribe --comp-unaware --vac
 ```
 
 **Simulation modes:**
 
 - default mode, no special option: real-time simulation from file, computationally aware. The chunk size is `MIN_CHUNK_SIZE` or larger, if more audio arrived during last update computation.
 
-- `--comp_unaware` option: computationally unaware simulation. It means that the timer that counts the emission times "stops" when the model is computing. The chunk size is always `MIN_CHUNK_SIZE`. The latency is caused only by the model being unable to confirm the output, e.g. because of language ambiguity etc., and not because of slow hardware or suboptimal implementation. We implement this feature for finding the lower bound for latency.
+- `--comp-unaware` option: computationally unaware simulation. It means that the timer that counts the emission times "stops" when the model is computing. The chunk size is always `MIN_CHUNK_SIZE`. The latency is caused only by the model being unable to confirm the output, e.g. because of language ambiguity etc., and not because of slow hardware or suboptimal implementation. We implement this feature for finding the lower bound for latency.
 
-- `--start_at START_AT`: Start processing audio at this time. The first update receives the whole audio by `START_AT`. It is useful for debugging, e.g. when we observe a bug in a specific time in audio file, and want to reproduce it quickly, without long waiting.
+- `--start-at START_AT`: Start processing audio at this time. The first update receives the whole audio by `START_AT`. It is useful for debugging, e.g. when we observe a bug in a specific time in audio file, and want to reproduce it quickly, without long waiting.
 
 - offline mode, to process whole audio with maximum quality, is not available yet. Instead, try large `--min-chunk-size` and `--frame-threshold`.
 
@@ -351,9 +351,9 @@ Then use the dirs in the following parameters: `--model-dir ct2_EuroLLM-9B-Instr
 ```
 $ python3 simulstreaming_translate.py -h
 usage: simulstreaming_translate.py [-h] [--min-chunk-size MIN_CHUNK_SIZE] [--min-len MIN_LEN] [--src-lan {ar,bg,ca,cs,da,de,el,en,es,et,fi,fr,ga,gl,hi,hr,hu,it,ja,ko,lt,lv,mt,nl,no,pl,pt,ro,ru,sk,sl,sv,tr,uk,zh,zh-sim,zh-tr}]
-                                   [--tgt-lan {ar,bg,ca,cs,da,de,el,en,es,et,fi,fr,ga,gl,hi,hr,hu,it,ja,ko,lt,lv,mt,nl,no,pl,pt,ro,ru,sk,sl,sv,tr,uk,zh,zh-sim,zh-tr}] [--sys_prompt SYS_PROMPT] [--init_prompt_src INIT_PROMPT_SRC]
-                                   [--init_prompt_tgt INIT_PROMPT_TGT] [--len-threshold LEN_THRESHOLD] [--language-specific-len-threshold] [--max-context-length MAX_CONTEXT_LENGTH] [--buffer_trimming {segments,sentences}]
-                                   [--model-dir MODEL_DIR] [--tokenizer-dir TOKENIZER_DIR] [-l {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--input-jsonl INPUT_JSONL] [--comp_unaware]
+                                   [--tgt-lan {ar,bg,ca,cs,da,de,el,en,es,et,fi,fr,ga,gl,hi,hr,hu,it,ja,ko,lt,lv,mt,nl,no,pl,pt,ro,ru,sk,sl,sv,tr,uk,zh,zh-sim,zh-tr}] [--sys-prompt SYS_PROMPT] [--init-prompt-src INIT_PROMPT_SRC]
+                                   [--init-prompt-tgt INIT_PROMPT_TGT] [--len-threshold LEN_THRESHOLD] [--language-specific-len-threshold] [--max-context-length MAX_CONTEXT_LENGTH] [--buffer-trimming {segments,sentences}]
+                                   [--model-dir MODEL_DIR] [--tokenizer-dir TOKENIZER_DIR] [-l {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--input-jsonl INPUT_JSONL] [--comp-unaware]
 
 options:
   -h, --help            show this help message and exit
@@ -364,11 +364,11 @@ options:
                         Source language code.
   --tgt-lan {ar,bg,ca,cs,da,de,el,en,es,et,fi,fr,ga,gl,hi,hr,hu,it,ja,ko,lt,lv,mt,nl,no,pl,pt,ro,ru,sk,sl,sv,tr,uk,zh,zh-sim,zh-tr}, --tgt-language {ar,bg,ca,cs,da,de,el,en,es,et,fi,fr,ga,gl,hi,hr,hu,it,ja,ko,lt,lv,mt,nl,no,pl,pt,ro,ru,sk,sl,sv,tr,uk,zh,zh-sim,zh-tr}
                         Target language code.
-  --sys_prompt SYS_PROMPT
+  --sys-prompt SYS_PROMPT
                         System prompt. If None, default one is used, depending on the language.
-  --init_prompt_src INIT_PROMPT_SRC
+  --init-prompt-src INIT_PROMPT_SRC
                         Init translation with source text. It should be a complete sentence in the source language. It can be context specific for the given input. Default is
-  --init_prompt_tgt INIT_PROMPT_TGT
+  --init-prompt-tgt INIT_PROMPT_TGT
                         Init translation with this target. It should be example translation of init_prompt_src. There is default init message, depending on the language.
   --len-threshold LEN_THRESHOLD
                         Ratio of the length of the source and generated target, in number of sentencepiece tokens. It should reflect the target language and. If not set, no len-threshold is used.
@@ -376,7 +376,7 @@ options:
                         Use language-specific length threshold, e.g. 1.3 for German.
   --max-context-length MAX_CONTEXT_LENGTH
                         Maximum number of tokens in the model to use.
-  --buffer_trimming {segments,sentences}
+  --buffer-trimming {segments,sentences}
                         Buffer trimming strategy.
   --model-dir MODEL_DIR
                         ct2 model directory. If not set, the default ct2_EuroLLM-9B-Instruct/ is used.
@@ -386,24 +386,24 @@ options:
                         Set the log level
   --input-jsonl INPUT_JSONL
                         Filename of jsonl file to simulate input. If not set, it is read from stdin.
-  --comp_unaware        Computationally unaware simulation.
+  --comp-unaware        Computationally unaware simulation.
 ```
 
 Example:
 
 ```
 # First, process audio with Whisper and save to jsonl file.
-python3 simulstreaming_whisper.py audio.wav --language en --task transcribe --comp_unaware --vac > output.jsonl
+python3 simulstreaming_whisper.py audio.wav --language en --task transcribe --comp-unaware --vac > output.jsonl
 
 # Then simulate LLM translation:
-python3 simulstreaming_translate.py --src-lang en --tgt-lan de --comp_unaware --input-jsonl output.jsonl > output-llm.jsonl
+python3 simulstreaming_translate.py --src-lang en --tgt-lan de --comp-unaware --input-jsonl output.jsonl > output-llm.jsonl
 ```
 
 **Simulation modes:**
 
 - default mode, no special option: real-time simulation from jsonl file, computationally aware. The chunk size is number of space-delimited words. It is `MIN_CHUNK_SIZE` or larger, if more words arrived during  computation of the last update.
 
-- `--comp_unaware` option: computationally unaware simulation. It means that the timer that counts the emission times "stops" when the model is computing. The chunk size is always `MIN_CHUNK_SIZE` words.
+- `--comp-unaware` option: computationally unaware simulation. It means that the timer that counts the emission times "stops" when the model is computing. The chunk size is always `MIN_CHUNK_SIZE` words.
 The latency is caused only by the model being unable to confirm the output, e.g. because of language ambiguity etc., and not because of slow hardware or suboptimal implementation. This is for finding the lower bound of latency.
 
 **Output format:**
