@@ -7,6 +7,8 @@ import torch
 
 from simulstreaming.whisper.simul_whisper.config import AlignAttConfig
 from simulstreaming.whisper.simul_whisper.simul_whisper import PaddedAlignAttWhisper
+from simulstreaming.utils.check_hallucinations import RepetitionDetector
+
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +149,7 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         self.model.refresh_segment(complete=True)
 
         self.unicode_buffer = []  # hide incomplete unicode character for the next iteration
+        self.hallucination_detector = RepetitionDetector()
 
     def insert_audio_chunk(self, audio):
         self.audio_chunks.append(torch.from_numpy(audio))
@@ -222,7 +225,10 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         text = self.model.tokenizer.decode(tokens)
         if len(text) == 0:
             return {}
-        
+       
+        # Check for repetition loops
+        result_hallucination = self.hallucination_detector.update(text)
+
         # word-level timestamps
         ts_words = self.timestamped_text(tokens, generation_progress)
         
@@ -235,6 +241,13 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         e = max(e, self.beg + 0.001)
 
         self.last_ts = e
+
+        if result_hallucination:
+            logger.warning(f'Hallucination detected in: {result_hallucination}')
+
+            logger.info("Reseting all buffers.")
+            self.model.refresh_segment(complete=True)
+            self.unicode_buffer = []
 
         # return (self.beg,e,text)
         return {
